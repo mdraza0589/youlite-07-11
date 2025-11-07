@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "80955700657",
+    "project_id": "youlite-e2dd4",
+    "storage_bucket": "youlite-e2dd4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:80955700657:android:28d6ce359938c22e96b990",
+        "android_client_info": {
+          "package_name": "com.anonymous.YouLite"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAENaXStkbX_9GvDGI7rQl7rxOKweLoLvA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
