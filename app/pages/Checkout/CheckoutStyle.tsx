@@ -1,11 +1,11 @@
 import Colors from "@/utils/Colors";
 import Dimenstion from "@/utils/Dimenstion";
-import { StyleSheet } from "react-native";
+import { Dimensions, StyleSheet } from "react-native";
+const { width } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#fff' },
     loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-
     header: {
         marginBottom: 24,
         backgroundColor: Colors.PRIMARY,
@@ -365,3 +365,4 @@ const styles = StyleSheet.create({
 });
 
 export default styles;
+

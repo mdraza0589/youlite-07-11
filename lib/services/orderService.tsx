@@ -126,6 +126,19 @@ export const createRazorpayOrder = async (payload: { amount: number; currency: s
     console.log(`----------------------------------------------------`)
     console.log({ e: e });
 
+    const razorpayOrder = {
+      id: `order_mock_${Date.now()}`, // This is the format of a real Razorpay Order ID.
+      entity: 'order',
+      amount: payload.amount,
+      currency: payload.currency,
+      receipt: payload.receipt,
+      status: 'created',
+      token: await getToken()
+    };
+    console.log({
+      razorpayOrder
+    })
+
     console.log(`----------------------------------------------------`)
     return false;
 

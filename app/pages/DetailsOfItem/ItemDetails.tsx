@@ -4,8 +4,11 @@ import Colors from '@/utils/Colors';
 import { Picker } from '@react-native-picker/picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Video } from 'expo-av';
 import { Modal, TouchableWithoutFeedback } from 'react-native';
+import { Video, ResizeMode } from "expo-av";
+import YoutubeIframe from "react-native-youtube-iframe";
+
+import styles from './itemDetailsStyle'
 import {
     ActivityIndicator,
     Dimensions,
@@ -17,13 +20,14 @@ import {
     Text,
     TouchableOpacity,
 } from 'react-native';
+
 // Import rating services
 import { loadReviews } from '@/lib/services/ratingServices';
 import Loading from '@/app/components/Loading';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Linking, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-const { width } = Dimensions.get('window');
+import { WebView } from 'react-native-webview';
 
 const toNum = (v: any, fb = 0): number => {
     const n = parseFloat(String(v ?? ''));
@@ -429,6 +433,7 @@ const ItemDetails = () => {
     const [deliveryAddress, setDeliveryAddress] = useState<string>('Loading address...');
     const [customer, setCustomer] = useState<any>(null);
     const [selectedDepositOption, setSelectedDepositOption] = useState<'full' | 'deposit'>('full');
+    const [showVideoPlayer, setShowVideoPlayer] = useState(false);
 
     // Calculate current price based on selected variation
     const getCurrentPrice = (): number => {
@@ -792,6 +797,22 @@ const ItemDetails = () => {
         }
     };
 
+    const extractYouTubeId = (url: string): string | null => {
+        try {
+            if (url.includes("youtube.com/watch?v=")) {
+                return url.split("v=")[1]?.split("&")[0] || null;
+            }
+            if (url.includes("youtu.be/")) {
+                return url.split("youtu.be/")[1]?.split("?")[0] || null;
+            }
+            if (url.includes("youtube.com/embed/")) {
+                return url.split("/embed/")[1]?.split("?")[0] || null;
+            }
+        } catch (e) { }
+        return null;
+    };
+
+
     const renderRelatedProduct = ({ item }: { item: RelatedProduct }) => {
         const isInCart = cartItems.includes(item.id);
         return (
@@ -824,28 +845,17 @@ const ItemDetails = () => {
     };
 
     const renderImageItem = ({ item, index }: { item: string; index: number }) => {
-        const uri = (item || '').trim();
+        const uri = (item || "").trim();
         if (!uri) return null;
 
         const video = isVideoLink(uri);
-        const videoThumbnail = video ? getYouTubeThumbnail(uri) : '';
+        const videoThumbnail = video ? getYouTubeThumbnail(uri) : "";
 
         return (
             <TouchableOpacity
                 onPress={() => {
-                    if (video) {
-                        // Handle YouTube embed URLs - convert to watch URL if needed
-                        let videoUrl = uri;
-                        if (uri.includes('youtube.com/embed')) {
-                            const videoId = uri.split('/embed/')[1]?.split('?')[0];
-                            if (videoId) {
-                                videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-                            }
-                        }
-                        Linking.openURL(videoUrl);
-                    } else {
-                        setSelectedImageIndex(index);
-                    }
+                    setSelectedImageIndex(index);
+                    setShowVideoPlayer(video);   // ✅ Show video if it's a video, hide if image
                 }}
                 style={{ marginRight: 10 }}
             >
@@ -869,17 +879,21 @@ const ItemDetails = () => {
                                 resizeMode="cover"
                             />
                         ) : (
-                            <View style={[
-                                styles.videoThumbnailPlaceholder,
-                                index === selectedImageIndex && styles.selectedVideoThumbnail,
-                            ]}>
+                            <View
+                                style={[
+                                    styles.videoThumbnailPlaceholder,
+                                    index === selectedImageIndex && styles.selectedVideoThumbnail,
+                                ]}
+                            >
                                 <Ionicons name="videocam-outline" size={24} color="#666" />
                             </View>
                         )}
-                        {/* Video play overlay - this will always show for video thumbnails */}
+
+                        {/* Play Icon Overlay */}
                         <View style={styles.videoPlayOverlay}>
                             <Ionicons name="play-circle" size={30} color={Colors.WHITE} />
                         </View>
+
                         <View style={styles.videoBadge}>
                             <Ionicons name="videocam" size={12} color={Colors.WHITE} />
                         </View>
@@ -888,6 +902,7 @@ const ItemDetails = () => {
             </TouchableOpacity>
         );
     };
+
 
     const renderReview = (item: Review) => (
         <View key={item.id} style={styles.reviewItem}>
@@ -943,6 +958,11 @@ const ItemDetails = () => {
     const total = currentPrice * quantity;
     const depositOptions = getDepositOptions();
     const selectedAmount = getSelectedAmount();
+    const videoId = extractYouTubeId(heroUri);
+    const embedUrl = videoId
+        ? `https://www.youtube.com/embed/${videoId}`
+        : heroUri;
+
 
     return (
         <SafeAreaView style={styles.container}>
@@ -958,37 +978,50 @@ const ItemDetails = () => {
                         <Ionicons name="arrow-back" size={24} color={Colors.WHITE} />
                     </TouchableOpacity>
 
-                    {/* Hero Image/Video Section */}
-                    <TouchableOpacity
-                        style={styles.videoHeroContainer}
-                        onPress={() => {
-                            if (isHeroVideo) {
-                                let videoUrl = heroUri;
-                                if (heroUri.includes('youtube.com/embed')) {
-                                    const videoId = heroUri.split('/embed/')[1]?.split('?')[0];
-                                    if (videoId) {
-                                        videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-                                    }
-                                }
-                                Linking.openURL(videoUrl);
-                            }
-                        }}
-                        activeOpacity={isHeroVideo ? 0.7 : 1}
-                    >
-                        <Image
-                            source={{ uri: isHeroVideo ? heroVideoThumbnail : heroUri }}
-                            style={styles.mainImage}
-                            resizeMode="cover"
-                        />
-                        {isHeroVideo && (
-                            <View style={styles.videoHero}>
-                                <Ionicons name="play-circle" size={80} color={Colors.WHITE} />
-                                <Text style={styles.videoHeroText}>Play Product Video</Text>
-                            </View>
-                        )}
-                    </TouchableOpacity>
 
-                    {/* Thumbnail List - Only show if there are multiple images/videos */}
+                    {/* ✅ Hero Image / Video Section */}
+                    <View style={styles.videoHeroContainer}>
+                        {showVideoPlayer && isHeroVideo ? (
+                            heroUri.includes(".mp4") ? (
+                                <Video
+                                    source={{ uri: heroUri }}
+                                    style={styles.mainImage}
+                                    resizeMode={ResizeMode.CONTAIN}
+                                    shouldPlay
+                                    useNativeControls
+                                />
+                            ) : (
+                                <YoutubeIframe
+                                    height={Dimensions.get("window").width}
+                                    width={Dimensions.get("window").width}
+                                    play={true}
+                                    videoId={videoId}
+                                    onError={(e: string) => console.log("YouTube Error:", e)}
+                                />
+                            )
+                        ) : (
+                            <TouchableOpacity
+                                onPress={() => isHeroVideo && setShowVideoPlayer(true)}
+                                activeOpacity={0.8}
+                            >
+                                <Image
+                                    source={{ uri: isHeroVideo ? heroVideoThumbnail : heroUri }}
+                                    style={styles.mainImage}
+                                    resizeMode="cover"
+                                />
+
+                                {isHeroVideo && (
+                                    <View style={styles.videoHero}>
+                                        <Ionicons name="play-circle" size={80} color={Colors.WHITE} />
+                                        <Text style={styles.videoHeroText}>Play Product Video</Text>
+                                    </View>
+                                )}
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+
+                    {/* ✅ Thumbnails */}
                     {product.images.length > 1 ? (
                         <FlatList
                             data={product.images}
@@ -1000,6 +1033,7 @@ const ItemDetails = () => {
                         />
                     ) : null}
                 </View>
+
 
                 {/* Product Info */}
                 <View style={styles.infoSection}>
@@ -1181,261 +1215,4 @@ const ItemDetails = () => {
 
 export default ItemDetails;
 
-const styles = StyleSheet.create({
-    button: {
-        backgroundColor: Colors.PRIMARY,
-        paddingVertical: 14,
-        paddingHorizontal: 24,
-        borderRadius: 10,
-        alignItems: "center",
-        marginTop: 20,
-    },
-    buttonText: {
-        color: "#fff",
-        fontSize: 16,
-        fontWeight: "600",
-    },
-    container: { flex: 1, backgroundColor: '#f8f9fa' },
-    imageSection: { backgroundColor: 'white', paddingBottom: 10, position: 'relative' },
-    backButton: {
-        position: 'absolute', top: 30, left: 20, zIndex: 10,
-        backgroundColor: 'rgba(0,0,0,0.5)', width: 40, height: 40, borderRadius: 20,
-        justifyContent: 'center', alignItems: 'center',
-    },
-    thumbnailList: { paddingHorizontal: 10, marginTop: 10 },
-    thumbnail: { width: 60, height: 60, marginRight: 10, borderRadius: 8 },
-    selectedThumbnail: { borderWidth: 2, borderColor: '#4a6cf7' },
-    infoSection: { backgroundColor: 'white', padding: 16, marginTop: 10 },
-    productName: { fontSize: 22, fontWeight: '700', color: '#2d3748', marginBottom: 10 },
-    priceContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
-    price: { fontSize: 20, fontWeight: 'bold', color: '#4a6cf7', marginRight: 10 },
-    originalPrice: { fontSize: 18, color: '#a0aec0', textDecorationLine: 'line-through', marginRight: 10 },
-    discountBadge: { backgroundColor: '#e53e3e', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
-    discountText: { color: 'white', fontWeight: '600', fontSize: 12 },
-    ratingContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 20,
-        flexWrap: 'wrap',
-        gap: 10,
-    },
-    videoThumbnailContainer: {
-        width: 80,
-        height: 80,
-        borderRadius: 10,
-        backgroundColor: '#000',
-        position: 'relative',
-        overflow: 'hidden',
-    },
-    videoThumbnailImage: {
-        width: '100%',
-        height: '100%',
-        borderRadius: 10,
-    },
-    videoThumbnailPlaceholder: {
-        width: '100%',
-        height: '100%',
-        backgroundColor: '#1a1a1a',
-        borderRadius: 10,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#404040',
-    },
-    videoPlayOverlay: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.3)', // Semi-transparent overlay
-    },
-    stars: { flexDirection: 'row', marginRight: 10 },
-    ratingText: { color: '#4a5568', fontSize: 16 },
-    categoryContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#f1f5f9',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
-        marginLeft: 'auto',
-    },
-    categoryText: {
-        fontSize: 14,
-        color: '#475569',
-        marginLeft: 6,
-        fontWeight: '500',
-    },
-    selectedVideoThumbnail: {
-        borderWidth: 2,
-        borderColor: '#4a6cf7',
-    },
-    depositSection: { marginBottom: 20 },
-    depositOption: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 15,
-        borderWidth: 1,
-        borderColor: '#e2e8f0',
-        borderRadius: 8,
-        marginBottom: 10,
-    },
-    selectedDepositOption: {
-        borderColor: '#4a6cf7',
-        backgroundColor: '#f0f4ff',
-    },
-    radioContainer: {
-        marginRight: 12,
-    },
-    radio: {
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        borderWidth: 2,
-        borderColor: '#cbd5e0',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    radioSelected: {
-        borderColor: '#4a6cf7',
-    },
-    radioInner: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: '#4a6cf7',
-    },
-    depositOptionContent: {
-        flex: 1,
-    },
-    depositOptionLabel: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#2d3748',
-        marginBottom: 4,
-    },
-    videoThumbnail: {
-        width: 80,
-        height: 80,
-        borderRadius: 10,
-        backgroundColor: '#000',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    videoLabel: {
-        color: Colors.WHITE,
-        fontSize: 12,
-        marginTop: 4,
-    },
-
-
-    depositOptionAmount: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#4a6cf7',
-    },
-    remainingAmount: {
-        fontSize: 14,
-        color: '#718096',
-        marginTop: 2,
-    },
-
-    colorSection: { marginBottom: 20 },
-    sectionTitle: { fontSize: 18, fontWeight: '600', color: '#2d3748', marginBottom: 10 },
-    picker: { height: 50, width: '100%', backgroundColor: '#f7fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' },
-    quantitySection: { marginBottom: 20 },
-    quantitySelector: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, alignSelf: 'flex-start' },
-    quantityButton: { padding: 10 },
-    quantityText: { paddingHorizontal: 15, fontSize: 16, fontWeight: '600' },
-    deliverySection: { marginBottom: 20 },
-    deliveryInfo: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#f7fafc', padding: 15, borderRadius: 8 },
-    deliveryTextContainer: { flex: 1, marginLeft: 10 },
-    deliveryAddress: { fontSize: 14, color: '#2d3748', marginBottom: 4 },
-    deliveryDate: { fontSize: 14, color: '#4a5568' },
-    changeText: { color: '#4a6cf7', fontWeight: '600' },
-    descriptionSection: { marginBottom: 20 },
-    descriptionText: { fontSize: 16, color: '#4a5568', lineHeight: 24 },
-    reviewsSection: { marginBottom: 20 },
-    reviewItem: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
-    reviewHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 5 },
-    reviewReviewer: { fontSize: 16, fontWeight: '600', flex: 1 },
-    reviewStars: { flexDirection: 'row', marginRight: 10 },
-    reviewDate: { fontSize: 12, color: '#718096' },
-    reviewComment: { fontSize: 14, color: '#4a5568' },
-    relatedSection: { backgroundColor: 'white', padding: 16, marginTop: 10, marginBottom: 80 },
-    relatedProduct: { width: 150, marginRight: 15, position: 'relative' },
-    relatedProductImage: { width: 150, height: 150, borderRadius: 8, marginBottom: 8 },
-    relatedProductName: { fontSize: 14, fontWeight: '500', color: '#2d3748', marginBottom: 4 },
-    relatedProductRating: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-    relatedProductRatingText: { fontSize: 12, color: '#4a5568', marginLeft: 4 },
-    relatedProductPrice: { fontSize: 16, fontWeight: 'bold', color: '#4a6cf7', marginBottom: 8 },
-    addToCartButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.PRIMARY, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 },
-    addToCartText: { fontSize: 12, fontWeight: '600', color: Colors.WHITE, marginLeft: 4 },
-    footer: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: 'white', padding: 16, borderTopWidth: 1, borderTopColor: '#e2e8f0' },
-    wishlistButton: { justifyContent: 'center', alignItems: 'center', padding: 15, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, marginRight: 10 },
-    addToCartButtonFooter: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 15, backgroundColor: Colors.SECONDARY, borderRadius: 8, marginRight: 10 },
-    addToCartTextFooter: { color: Colors.WHITE, fontWeight: '600', fontSize: 16 },
-    checkoutButton: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 15, backgroundColor: Colors.PRIMARY, borderRadius: 8 },
-    checkoutText: { color: 'white', fontWeight: '600', fontSize: 16 },
-    secureText: { fontSize: 12, color: '#666', marginTop: 4 },
-    messageContainer: {
-        position: 'absolute',
-        bottom: 80,
-        left: 0,
-        right: 0,
-        backgroundColor: '#333',
-        padding: 16,
-        marginHorizontal: 16,
-        borderRadius: 8,
-        alignItems: 'center',
-    },
-    messageText: {
-        color: '#fff',
-        fontSize: 16,
-    },
-
-    videoHeroContainer: {
-        width: width,
-        height: width,
-        backgroundColor: '#000',
-        position: 'relative', // Add this
-    },
-    videoHero: {
-        position: 'absolute', // Add this
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.3)', // Optional: add a slight overlay
-    },
-    videoHeroText: {
-        color: Colors.WHITE,
-        fontSize: 16,
-        marginTop: 10,
-        fontWeight: '600',
-    },
-    mainImage: {
-        width: width,
-        height: width
-    },
-
-    videoBadge: {
-        position: 'absolute',
-        top: 5,
-        right: 5,
-        backgroundColor: 'rgba(0,0,0,0.7)',
-        borderRadius: 8,
-        padding: 2,
-    },
-    videoHeroThumbnail: {
-        width: '100%',
-        height: '100%',
-        position: 'absolute',
-    },
-});
 

@@ -6,13 +6,20 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
+    /* ✅ FIX: Required for Expo + React Native */
     "module": "esnext",
-    "moduleResolution": "node",
-    "resolveJsonModule": true,
+    "moduleResolution": "bundler",
+    /* ✅ Fix deprecated warnings */
+    "ignoreDeprecations": "6.0",
+    /* ✅ Keep path alias support */
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
-    }
+      "@/*": [
+        "./*"
+      ]
+    },
+    /* ✅ Allow JSON imports */
+    "resolveJsonModule": true
   },
   "include": [
     "**/*.ts",
@@ -21,3 +28,4 @@
     "expo-env.d.ts"
   ]
 }
+

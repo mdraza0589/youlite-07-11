@@ -13,6 +13,7 @@ import {
   View,
   Modal,
   Alert,
+  RefreshControl, // Add this import
 } from 'react-native';
 import { getSession } from '../../lib/services/authService';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -61,6 +62,10 @@ const ChatScreen = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const flatListRef = useRef<FlatList>(null);
 
+  // Refresh states
+  const [refreshingProducts, setRefreshingProducts] = useState(false);
+  const [refreshingMessages, setRefreshingMessages] = useState(false);
+
   // Edit/Delete modals state
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
@@ -89,7 +94,7 @@ const ChatScreen = () => {
       setUserId(session.user.id);
       setUserName(session.user.name || session.user.first_name || session.user.email);
       setUserEmail(session.user.email);
-      fetchProductsWithChats(session.user.id);
+      await fetchProductsWithChats(session.user.id);
     } else {
       console.warn('No user session found.');
     }
@@ -166,6 +171,34 @@ const ChatScreen = () => {
       console.error('Fetch messages error:', e);
     } finally {
       setLoadingMessages(false);
+    }
+  };
+
+  // Refresh products list
+  const onRefreshProducts = async () => {
+    if (!userId) return;
+
+    setRefreshingProducts(true);
+    try {
+      await fetchProductsWithChats(userId);
+    } catch (error) {
+      console.error('Refresh products error:', error);
+    } finally {
+      setRefreshingProducts(false);
+    }
+  };
+
+  // Refresh messages
+  const onRefreshMessages = async () => {
+    if (!selectedProduct || !userId) return;
+
+    setRefreshingMessages(true);
+    try {
+      await fetchMessages(selectedProduct.id);
+    } catch (error) {
+      console.error('Refresh messages error:', error);
+    } finally {
+      setRefreshingMessages(false);
     }
   };
 
@@ -317,7 +350,7 @@ const ChatScreen = () => {
                 setSelectedProduct(null);
                 setMessages([]);
                 // Refresh product list
-                if (userId) fetchProductsWithChats(userId);
+                if (userId) await fetchProductsWithChats(userId);
               } else {
                 throw new Error(result.error || 'Failed to delete conversation');
               }
@@ -472,6 +505,14 @@ const ChatScreen = () => {
               keyExtractor={(item) => item.id.toString()}
               renderItem={renderProductItem}
               contentContainerStyle={styles.productList}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshingProducts}
+                  onRefresh={onRefreshProducts}
+                  colors={[Colors.PRIMARY]}
+                  tintColor={Colors.PRIMARY}
+                />
+              }
             />
           )}
         </View>
@@ -514,6 +555,14 @@ const ChatScreen = () => {
               contentContainerStyle={styles.messagesContainer}
               onContentSizeChange={scrollToBottom}
               onLayout={scrollToBottom}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshingMessages}
+                  onRefresh={onRefreshMessages}
+                  colors={[Colors.PRIMARY]}
+                  tintColor={Colors.PRIMARY}
+                />
+              }
             />
           )}
 
@@ -616,6 +665,7 @@ const ChatScreen = () => {
     </View>
   );
 };
+
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f6f7fb' },

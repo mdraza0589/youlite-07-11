@@ -824,30 +824,25 @@ add_action('rest_api_init', function () {
  * Callback function to create a Razorpay order.
  */
 function create_razorpay_order_for_app($request) {
-    // 1. Get data from your app
+    // 1. Get data from your app (amount should be sent from your app)
     $params = $request->get_json_params();
     $order_total = isset($params['amount']) ? floatval($params['amount']) : 0;
-    $woo_order_id = isset($params['woo_order_id']) ? intval($params['woo_order_id']) : 0;
 
     if ($order_total <= 0) {
         return new WP_Error('invalid_amount', 'Invalid order amount.', array('status' => 400));
     }
 
-    if ($woo_order_id <= 0) {
-        return new WP_Error('invalid_order', 'Invalid WooCommerce order ID.', array('status' => 400));
-    }
-
-    // Ensure the Razorpay SDK is loaded
+    // Ensure the Razorpay SDK is loaded from the WooCommerce plugin
     if (!class_exists('Razorpay\Api\Api')) {
         $razorpay_plugin_path = WP_PLUGIN_DIR . '/razorpay-for-woocommerce/razorpay-php/Razorpay.php';
         if (file_exists($razorpay_plugin_path)) {
             require_once($razorpay_plugin_path);
         } else {
-            return new WP_Error('razorpay_sdk_missing', 'Razorpay SDK not found.', array('status' => 500));
+             return new WP_Error('razorpay_sdk_missing', 'Razorpay SDK not found.', array('status' => 500));
         }
     }
 
-    // Get your Razorpay keys from WooCommerce settings
+    // Get your Razorpay keys from the WooCommerce settings
     $razorpay_settings = get_option('woocommerce_razorpay_settings');
     if (empty($razorpay_settings) || !isset($razorpay_settings['key_id']) || !isset($razorpay_settings['key_secret'])) {
         return new WP_Error('razorpay_keys_missing', 'Razorpay API keys are not configured in WooCommerce.', array('status' => 500));
@@ -860,73 +855,44 @@ function create_razorpay_order_for_app($request) {
 
     // 2. Create Razorpay Order
     $razorpay_order_data = [
-        'receipt'         => 'rcpt_' . $woo_order_id . '_' . time(),
-        'amount'          => round($order_total * 100), // Amount in paise for INR
-        'currency'        => 'INR',
-        'payment_capture' => 1, // Auto-capture payment
-        'notes'           => [
-            'woo_order_id' => $woo_order_id,
-        ]
+        'receipt'         => 'rcptid_app_' . time(),
+        'amount'          => $order_total * 100, // Amount in the smallest currency unit (paise for INR)
+        'currency'        => 'INR', // Or get from request
+        'payment_capture' => 1 // Auto-capture payment
     ];
 
     try {
         $razorpay_order = $api->order->create($razorpay_order_data);
-        
-        // Store Razorpay order ID in WooCommerce order meta for verification
-        if ($woo_order_id) {
-            update_post_meta($woo_order_id, '_razorpay_order_id', $razorpay_order['id']);
-        }
-
-        // 3. Send response back to app
-        $response_data = [
-            'success' => true,
-            'razorpay_order_id' => $razorpay_order['id'],
-            'key_id' => $key_id,
-            'amount' => $order_total,
-            'currency' => 'INR'
-        ];
-
-        return new WP_REST_Response($response_data, 200);
-
     } catch (Exception $e) {
-        error_log('Razorpay Order Creation Error: ' . $e->getMessage());
         return new WP_Error('razorpay_error', $e->getMessage(), array('status' => 500));
     }
+
+    // 3. Send the Razorpay Order ID and your public Key ID back to your app
+    $response_data = [
+        'razorpay_order_id' => $razorpay_order['id'],
+        'key_id'            => $key_id,
+    ];
+
+    return new WP_REST_Response($response_data, 200);
 }
 
 /**
  * Callback function to verify the Razorpay payment signature.
  */
-
 function verify_razorpay_payment_for_app($request) {
     $params = $request->get_json_params();
-    
-    $razorpay_order_id = sanitize_text_field($params['razorpay_order_id'] ?? '');
-    $razorpay_payment_id = sanitize_text_field($params['razorpay_payment_id'] ?? '');
-    $razorpay_signature = sanitize_text_field($params['razorpay_signature'] ?? '');
-    $woo_order_id = intval($params['order_id'] ?? 0);
+    $razorpay_order_id = sanitize_text_field($params['razorpay_order_id']);
+    $razorpay_payment_id = sanitize_text_field($params['razorpay_payment_id']);
+    $razorpay_signature = sanitize_text_field($params['razorpay_signature']);
 
     // Check if required parameters are present
-    if (empty($razorpay_order_id) || empty($razorpay_payment_id) || empty($razorpay_signature) || $woo_order_id <= 0) {
-        error_log('Missing parameters for payment verification: ' . json_encode($params));
+    if (empty($razorpay_order_id) || empty($razorpay_payment_id) || empty($razorpay_signature)) {
         return new WP_Error('missing_params', 'Required payment details are missing.', array('status' => 400));
-    }
-
-    // Get WooCommerce order
-    $order = wc_get_order($woo_order_id);
-    if (!$order) {
-        error_log('WooCommerce order not found: ' . $woo_order_id);
-        return new WP_Error('order_not_found', 'WooCommerce order not found.', array('status' => 404));
     }
 
     // Get your key secret
     $razorpay_settings = get_option('woocommerce_razorpay_settings');
-    $key_secret = $razorpay_settings['key_secret'] ?? '';
-
-    if (empty($key_secret)) {
-        error_log('Razorpay key secret not configured');
-        return new WP_Error('key_missing', 'Razorpay keys not configured.', array('status' => 500));
-    }
+    $key_secret = $razorpay_settings['key_secret'];
 
     $attributes = array(
         'razorpay_order_id'   => $razorpay_order_id,
@@ -935,45 +901,16 @@ function verify_razorpay_payment_for_app($request) {
     );
 
     try {
-        // Verify payment signature
-        $api = new \Razorpay\Api\Api($key_id, $key_secret);
+        // You MUST use the utility class from the Razorpay SDK to verify
+        $api = new \Razorpay\Api\Api(null, $key_secret);
         $api->utility->verifyPaymentSignature($attributes);
 
-        // ✅ CRITICAL: Update WooCommerce order status
-        $order->payment_complete($razorpay_payment_id);
-        $order->update_status('processing', __('Payment verified via Razorpay. Payment ID: ', 'woocommerce') . $razorpay_payment_id);
-        
-        // Store payment details in order meta
-        $order->update_meta_data('_razorpay_payment_id', $razorpay_payment_id);
-        $order->update_meta_data('_razorpay_order_id', $razorpay_order_id);
-        $order->save();
-
-        error_log('Payment verified successfully for order: ' . $woo_order_id . ', Payment ID: ' . $razorpay_payment_id);
-
-        return new WP_REST_Response([
-            'success' => true,
-            'message' => 'Payment verified successfully.',
-            'order_id' => $woo_order_id,
-            'status' => $order->get_status()
-        ], 200);
+        return new WP_REST_Response(['status' => 'success', 'message' => 'Payment verified successfully.'], 200);
 
     } catch (\Razorpay\Api\Errors\SignatureVerificationError $e) {
         // Signature is not valid
-        error_log('Signature verification failed for order ' . $woo_order_id . ': ' . $e->getMessage());
-        
-        // Update order status to failed
-        $order->update_status('failed', __('Razorpay signature verification failed.', 'woocommerce'));
-        
-        return new WP_REST_Response([
-            'success' => false,
-            'message' => 'Invalid Razorpay signature.',
-            'error' => $e->getMessage()
-        ], 400);
+        return new WP_REST_Response(['status' => 'failed', 'message' => 'Invalid Razorpay signature.'], 400);
     } catch (Exception $e) {
-        error_log('Payment verification error for order ' . $woo_order_id . ': ' . $e->getMessage());
-        
-        $order->update_status('failed', __('Payment verification error: ', 'woocommerce') . $e->getMessage());
-        
         return new WP_Error('verification_error', $e->getMessage(), array('status' => 500));
     }
 }

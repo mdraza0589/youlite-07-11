@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useState } from 'react';
-import { Alert, ToastAndroid } from 'react-native';
+import styles from './CheckoutStyle';
 
 import {
   ActivityIndicator,
@@ -16,7 +16,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  StyleSheet,
   Switch,
   Text,
   TextInput,
@@ -397,13 +396,14 @@ const AddressInput = memo(({
         returnKeyType="next"
         blurOnSubmit={false}
         keyboardType={keyboardType}
-        autoCapitalize={field === 'email' ? 'none' : 'words'}
+        autoCapitalize={field === 'email' ? 'none' : 'words'} // No auto-capitalization for email
+        autoCorrect={field === 'email' ? false : true} // No autocorrect for email
+        autoComplete={field === 'email' ? 'email' : 'off'} // Better autofill for email
       />
       {error && <Text style={styles.errorText}>{error}</Text>}
     </View>
   );
 });
-
 AddressInput.displayName = 'AddressInput';
 
 /* =================================================================== */
@@ -415,10 +415,8 @@ const Checkout: React.FC = () => {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [shipping, setShipping] = useState<Address | null>(null);
   const [billing, setBilling] = useState<Address | null>(null);
-  const [sameAddress, setSameAddress] = useState(false);
-  const [activeTab, setActiveTab] = useState<'shipping' | 'billing'>('shipping');
-  const [editShipping, setEditShipping] = useState(false);
-  const [editBilling, setEditBilling] = useState(false);
+  const [sameAddress, setSameAddress] = useState(true);
+  const [editAddress, setEditAddress] = useState(false); // Single edit state
   const [placingOrder, setPlacingOrder] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -667,15 +665,37 @@ const Checkout: React.FC = () => {
       const customer = await getCustomerById(session.user.id);
       console.log('Customer data:', customer);
 
-      console.log('📍 Shipping address:', customer?.shipping);
-      console.log('📍 Billing address:', customer?.billing);
+      // Get session email if available
+      const sessionEmail = session.user.email;
+      console.log('📧 Session email:', sessionEmail);
 
-      setShipping(customer?.shipping || null);
-      setBilling(customer?.billing || null);
+      // Set billing address as primary (use billing if available, otherwise shipping)
+      const billingAddress = customer?.billing || customer?.shipping || {};
+
+      // Set email from session if available
+      if (sessionEmail && (!billingAddress.email || billingAddress.email === '')) {
+        billingAddress.email = sessionEmail;
+        console.log('✅ Set billing email from session:', sessionEmail);
+      }
+
+      setBilling(billingAddress);
+
+
+      // Set shipping address same as billing by default
+      setShipping(billingAddress);
+      setSameAddress(true);
 
       // Load coupons
       const couponsMeta = customer?.meta_data?.find((m: any) => m.key === 'applied_coupons')?.value || [];
+      console.log('🎫 Coupons meta:', couponsMeta);
       setAppliedCoupons(Array.isArray(couponsMeta) ? couponsMeta : []);
+
+      // DEBUG: Check cart meta data
+      const cartMeta = customer?.meta_data?.find((m: any) => m.key === 'cart')?.value || [];
+      console.log('🛒 Cart meta data found:', cartMeta);
+      console.log('🛒 Cart items count:', cartMeta.length);
+      console.log('🛒 Cart meta data type:', typeof cartMeta);
+      console.log('🛒 Is cart meta array?', Array.isArray(cartMeta));
 
       // Load tax, shipping, and payment gateways in parallel
       const [rates, methods, gateways] = await Promise.all([
@@ -725,48 +745,56 @@ const Checkout: React.FC = () => {
         }
       } else {
         console.log('🛒 CART mode');
-        const cartMeta = customer?.meta_data?.find((m: any) => m.key === 'cart')?.value || [];
-        console.log('Cart meta data:', cartMeta);
-        console.log('Cart items count:', cartMeta.length);
 
-        const fetched: CartItem[] = [];
-        for (const { id, quantity } of cartMeta) {
-          try {
-            console.log(`Fetching product ${id}...`);
-            const res = await getProductDetail(id);
-            const p = res?.data;
-            if (!p) {
-              console.warn(`Product ${id} not found`);
-              continue;
+        // FIX: Better cart data handling
+        let cartItemsData = [];
+
+        if (Array.isArray(cartMeta) && cartMeta.length > 0) {
+          console.log('🛒 Processing cart items...');
+
+          for (const cartItem of cartMeta) {
+            try {
+              console.log(`🛒 Fetching product ${cartItem.id}...`);
+              const res = await getProductDetail(cartItem.id);
+              const p = res?.data;
+
+              if (!p) {
+                console.warn(`❌ Product ${cartItem.id} not found`);
+                continue;
+              }
+
+              const attrs = Array.isArray(p.attributes) ? p.attributes : [];
+              const color = attrs.find((a: any) => a?.name?.toLowerCase().includes('color'))?.options?.[0] || 'N/A';
+              const size = attrs.find((a: any) => a?.name?.toLowerCase().includes('size'))?.options?.[0] || 'N/A';
+
+              // Determine payment methods for this product
+              const payment_methods = ['cod', 'razorpay']; // Default to supporting both
+
+              const item: CartItem = {
+                id: String(p.id),
+                name: p.name,
+                price: parseFloat(p.sale_price || p.price) || 0,
+                originalPrice: parseFloat(p.regular_price || p.price) || 0,
+                size,
+                color,
+                image: { uri: p.images?.[0]?.src || 'https://via.placeholder.com/80' },
+                quantity: cartItem.quantity || 1,
+                tax_class: p.tax_class || 'standard',
+                tax_status: p.tax_status || 'taxable',
+                payment_methods,
+              };
+              console.log(`✅ Product ${cartItem.id} added to cart:`, item);
+              cartItemsData.push(item);
+            } catch (e) {
+              console.error(`❌ Failed to load product ${cartItem.id}:`, e);
             }
-            const attrs = Array.isArray(p.attributes) ? p.attributes : [];
-            const color = attrs.find((a: any) => a?.name?.toLowerCase().includes('color'))?.options?.[0] || 'N/A';
-            const size = attrs.find((a: any) => a?.name?.toLowerCase().includes('size'))?.options?.[0] || 'N/A';
-
-            // Determine payment methods for this product
-            const payment_methods = ['cod', 'razorpay']; // Default to supporting both
-
-            const item: CartItem = {
-              id: String(p.id),
-              name: p.name,
-              price: parseFloat(p.sale_price || p.price) || 0,
-              originalPrice: parseFloat(p.regular_price || p.price) || 0,
-              size,
-              color,
-              image: { uri: p.images?.[0]?.src || 'https://via.placeholder.com/80' },
-              quantity: quantity || 1,
-              tax_class: p.tax_class || 'standard',
-              tax_status: p.tax_status || 'taxable',
-              payment_methods,
-            };
-            console.log(`✅ Product ${id} added:`, item);
-            fetched.push(item);
-          } catch (e) {
-            console.error(`❌ Failed to load product ${id}:`, e);
           }
+        } else {
+          console.log('🛒 No cart items found or cart is empty');
         }
-        console.log('✅ Total cart items loaded:', fetched.length);
-        setCartItems(fetched);
+
+        console.log('✅ Total cart items loaded:', cartItemsData.length);
+        setCartItems(cartItemsData);
       }
 
     } catch (e) {
@@ -814,6 +842,12 @@ const Checkout: React.FC = () => {
     if (!addr.phone?.trim()) return 'Phone number is required';
     if (!validatePhone(addr.phone)) return 'Invalid phone number (10 digits required)';
 
+    // Email validation only for billing address
+    if (type === 'billing') {
+      if (!addr.email?.trim()) return 'Email is required for billing';
+      if (!validateEmail(addr.email)) return 'Invalid email format';
+    }
+
     return null;
   };
 
@@ -834,27 +868,107 @@ const Checkout: React.FC = () => {
     }
   };
 
-  const saveAddress = async (type: 'shipping' | 'billing') => {
+  const saveAddress = async () => {
     if (!userId) return;
-    const addr = type === 'shipping' ? shipping : billing;
 
-    const validationError = validateAddress(addr, type);
-    if (validationError) {
-      showToast(validationError);
+    const billingError = validateAddress(billing, 'Billing');
+    if (billingError) {
+      showToast(billingError);
       return;
     }
 
     try {
-      await updateCustomerById(userId, { [type]: addr });
+      // Save both addresses
+      await updateCustomerById(userId, {
+        billing: billing,
+        shipping: sameAddress ? billing : shipping
+      });
       showToast('Address saved successfully');
-      type === 'shipping' ? setEditShipping(false) : setEditBilling(false);
+      setEditAddress(false);
     } catch (e) {
       console.error('Save address error', e);
       showToast('Failed to save address');
     }
   };
 
-  // Updated placeOrder function with COD and Razorpay logic
+  // Handle billing address changes
+  // Simplified - always update shipping when billing changes
+  const handleBillingChange = useCallback((field: keyof Address, value: string) => {
+    setBilling(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev, [field]: value };
+
+      // Always update shipping since sameAddress is always true
+      setShipping(updated);
+
+      return updated;
+    });
+  }, []); // Remove sameAddress dependency
+
+  const handleSameAddressToggle = useCallback((value: boolean) => {
+    setSameAddress(value);
+    if (value && billing) {
+      // Copy billing to shipping when toggled on
+      setShipping(billing);
+    }
+  }, [billing]);
+
+  // Address field configuration - UPDATED to include email
+  const addressFields: [keyof Address, string, any][] = [
+    ['first_name', 'First Name*', 'default'],
+    ['last_name', 'Last Name*', 'default'],
+    ['company', 'Company (Optional)', 'default'],
+    ['address_1', 'Address Line 1*', 'default'],
+    ['address_2', 'Address Line 2 (Optional)', 'default'],
+    ['city', 'City*', 'default'],
+    ['state', 'State*', 'default'],
+    ['postcode', 'Postcode* (6 digits)', 'numeric'],
+    ['country', 'Country*', 'default'],
+    ['email', 'Email*', 'email-address'],
+    ['phone', 'Phone* (10 digits)', 'phone-pad'],
+  ];
+
+  // Address display helper
+  const addrLines = (addr: Address | null) => {
+    if (!addr) return [];
+
+    const lines = [
+      `${addr.first_name || ''} ${addr.last_name || ''}`.trim(),
+      addr.company,
+      addr.address_1,
+      addr.address_2,
+      `${addr.city || ''}${addr.state ? ', ' + addr.state : ''} ${addr.postcode || ''}`.trim(),
+      addr.country,
+      addr.phone,
+    ];
+
+    // Always show email for billing address
+    if (addr.email) {
+      lines.push(`Email: ${addr.email}`);
+    }
+
+    return lines.filter(line => line && line.trim() !== '');
+  };
+
+  const AddressDisplay = ({ addr }: { addr: Address | null }) => {
+    const lines = addrLines(addr);
+
+    return (
+      <>
+        {lines.length === 0 ? (
+          <Text style={styles.addrLine}>No address saved</Text>
+        ) : (
+          lines.map((line, index) => (
+            <Text key={`addr-${index}-${line.substring(0, 10)}`} style={styles.addrLine}>
+              {line}
+            </Text>
+          ))
+        )}
+      </>
+    );
+  };
+
+  // Updated placeOrder function (same as before, just using the new state structure)
   const placeOrder = async () => {
     console.log('=== PLACE ORDER STARTED ===');
 
@@ -886,14 +1000,12 @@ const Checkout: React.FC = () => {
     const shippingError = validateAddress(shipping, 'Shipping');
     if (shippingError) {
       showToast(shippingError);
-      setActiveTab('shipping');
       return;
     }
 
     const billingError = validateAddress(billing, 'Billing');
     if (billingError) {
       showToast(billingError);
-      setActiveTab('billing');
       return;
     }
 
@@ -979,8 +1091,10 @@ const Checkout: React.FC = () => {
         return;
       }
 
+      // Step 3: Handle Razorpay orders - create Razorpay order
       console.log('💳 Creating Razorpay Order...');
 
+      // FIX: Correct amount conversion - multiply by 100 to convert rupees to paise
       const amountInPaise = Math.round(total);
 
       const razorpayOrderPayload = {
@@ -994,6 +1108,9 @@ const Checkout: React.FC = () => {
       };
 
       console.log('Razorpay Order Payload:', razorpayOrderPayload);
+      console.log('Total amount (₹):', total);
+      console.log('Amount in paise:', amountInPaise);
+
       const razorpayOrder = await createRazorpayOrder(razorpayOrderPayload);
 
       console.log('Razorpay Order Response:', razorpayOrder);
@@ -1031,69 +1148,99 @@ const Checkout: React.FC = () => {
 
       console.log('Prefill Data:', prefillData);
 
-      try {
-        const options = {
-          description: `Order #${wooCommerceOrder.id}`,
-          image: 'https://youlite.in/wp-content/uploads/2022/06/short-logo.png',
-          currency: 'INR',
-          key: razorpayOrder.key_id || 'rzp_live_RNs9lqLuduxCWX',
-          amount: amountInPaise,
-          name: 'YouLite Store',
-          order_id: razorpayOrderId,
-          prefill: prefillData,
-          theme: { color: Colors.PRIMARY },
-          notes: {
-            woo_order_id: wooCommerceOrder.id.toString(),
-            customer_id: userId.toString(),
-          },
+      const options = {
+        description: `Order #${wooCommerceOrder.id}`,
+        image: 'https://youlite.in/wp-content/uploads/2022/06/short-logo.png',
+        currency: 'INR',
+        key: razorpayOrder.key_id || 'rzp_live_Rd7weWo8FeoLOm',
+        amount: amountInPaise, // ← REMOVE .toString() from this line
+        name: 'YouLite Store',
+        order_id: razorpayOrderId,
+        prefill: prefillData,
+        theme: { color: Colors.PRIMARY },
+        notes: {
+          woo_order_id: wooCommerceOrder.id.toString(),
+          customer_id: userId.toString()
+        }
+      };
+
+      console.log('Razorpay Checkout Options:', {
+        ...options,
+        key: options.key.substring(0, 10) + '...',
+        amount: options.amount
+      });
+
+      console.log('🚀 Opening Razorpay Checkout...');
+
+      RazorpayCheckout.open(options).then(async (paymentData) => {
+        console.log('✅ Payment Success:', paymentData);
+
+        // Step 5: Verify payment
+        console.log('🔍 Verifying payment...');
+        const verificationPayload = {
+          order_id: wooCommerceOrder.id,
+          razorpay_payment_id: paymentData.razorpay_payment_id,
+          razorpay_order_id: paymentData.razorpay_order_id,
+          razorpay_signature: paymentData.razorpay_signature
         };
 
-        console.log('Razorpay Checkout Options:', {
-          ...options,
-          key: options.key.substring(0, 10) + '...' // Hide full key in logs
-        });
+        console.log('Verification Payload:', verificationPayload);
+        const verificationResult = await processRazorpayPayment(verificationPayload);
 
-        console.log('🚀 Opening Razorpay Checkout...');
+        console.log('✅ Payment verified:', verificationResult);
 
-
-        RazorpayCheckout.open(options)
-          .then(async (data: any) => {
-            console.log('Payment Success:', data);
-
-            // ✅ Pass all required fields to processRazorpayPayment
-            await processRazorpayPayment({
-              order_id: wooCommerceOrder.id,
-              razorpay_payment_id: data.razorpay_payment_id,
-              razorpay_order_id: data.razorpay_order_id,
-              razorpay_signature: data.razorpay_signature,
-            });
-
-            // (Optional) You can show a success toast or navigate to order summary
-            ToastAndroid.show('Payment successful!', ToastAndroid.SHORT);
-          })
-          .catch((error: any) => {
-            console.log('Razorpay Error:', error);
-
-            // 🔹 Handle user cancellation or dismissed Razorpay popup gracefully
-            if (
-              error?.description === 'Payment cancelled' ||
-              error?.error?.reason === 'payment_error' ||
-              error?.error?.step === 'payment_authentication'
-            ) {
-              console.log('User cancelled the payment flow.');
-              ToastAndroid.show('Payment cancelled', ToastAndroid.SHORT);
-              return;
-            }
-
-            // ⚠️ Only show alert for real payment errors
-            Alert.alert(
-              'Payment Failed', error?.description || 'Something went wrong, please try again.'
-            );
+        // Step 6: Clear cart
+        if (params.buyNow !== 'true') {
+          console.log('🛒 Clearing cart...');
+          await updateCustomerById(userId, {
+            meta_data: [{ key: 'cart', value: [] }]
           });
-      } catch (err) {
-        console.error('Unexpected error during Razorpay payment:', err);
-        Alert.alert('Error', 'Something went wrong while initializing payment.');
-      }
+          console.log('✅ Cart cleared');
+        }
+
+        showToast('Order placed successfully!');
+        console.log('🎉 ORDER COMPLETED!');
+
+        setTimeout(() => {
+          router.replace({
+            pathname: '/pages/orderHistory/orderHistory',
+            params: {
+              orderId: wooCommerceOrder.id.toString()
+            }
+          });
+        }, 1500);
+
+      }).catch((error) => {
+        console.error('❌ RAZORPAY PAYMENT ERROR:', error);
+
+        if (error.code !== undefined) {
+          console.error('Razorpay Error Code:', error.code);
+          console.error('Razorpay Error Description:', error.description);
+
+          switch (error.code) {
+            case 0:
+              showToast('Network error. Please check your connection');
+              break;
+            case 1:
+              showToast(error.description || 'Payment failed');
+              break;
+            case 2:
+              showToast('Payment cancelled by user');
+              break;
+            case 3:
+              showToast('Payment processing failed');
+              break;
+            default:
+              showToast('Payment error. Please try again');
+          }
+        } else if (error.description) {
+          showToast(error.description);
+        } else if (error.message) {
+          showToast(error.message);
+        } else {
+          showToast('Failed to process payment. Please try again');
+        }
+      });
 
     } catch (error: any) {
       console.error('❌ ORDER ERROR:', error);
@@ -1130,110 +1277,6 @@ const Checkout: React.FC = () => {
     }
   };
 
-  // FIXED: Separate handlers for shipping and billing
-  const handleShippingChange = useCallback((field: keyof Address, value: string) => {
-    setShipping(prev => {
-      if (!prev) return prev;
-      const updated = { ...prev, [field]: value };
-
-      // If same address is enabled, also update billing
-      if (sameAddress) {
-        setBilling(updated);
-      }
-
-      return updated;
-    });
-  }, [sameAddress]);
-
-  const handleBillingChange = useCallback((field: keyof Address, value: string) => {
-    setBilling(prev => prev ? { ...prev, [field]: value } : null);
-  }, []);
-
-  const handleSameAddressToggle = useCallback((value: boolean) => {
-    setSameAddress(value);
-    if (value && shipping) {
-      setBilling({ ...shipping });
-    }
-  }, [shipping]);
-
-  // FIXED: Generate unique keys using index to avoid duplicate key errors
-  const addrLines = (addr: Address | null) => {
-    if (!addr) return [];
-
-    const lines = [
-      `${addr.first_name || ''} ${addr.last_name || ''}`.trim(),
-      addr.company,
-      addr.address_1,
-      addr.address_2,
-      `${addr.city || ''}${addr.state ? ', ' + addr.state : ''} ${addr.postcode || ''}`.trim(),
-      addr.country,
-      addr.email,
-      addr.phone,
-    ].filter(line => line && line.trim() !== '');
-
-    return lines;
-  };
-
-  const AddressDisplay = ({ addr }: { addr: Address | null }) => {
-    const lines = addrLines(addr);
-
-    return (
-      <>
-        {lines.length === 0 ? (
-          <Text style={styles.addrLine}>No address saved</Text>
-        ) : (
-          lines.map((line, index) => (
-            <Text key={`addr-${index}-${line.substring(0, 10)}`} style={styles.addrLine}>
-              {line}
-            </Text>
-          ))
-        )}
-      </>
-    );
-  };
-
-  // Address field configuration
-  const addressFields: [keyof Address, string, any][] = [
-    ['first_name', 'First Name*', 'default'],
-    ['last_name', 'Last Name*', 'default'],
-    ['company', 'Company (Optional)', 'default'],
-    ['address_1', 'Address Line 1*', 'default'],
-    ['address_2', 'Address Line 2 (Optional)', 'default'],
-    ['city', 'City*', 'default'],
-    ['state', 'State*', 'default'],
-    ['postcode', 'Postcode* (6 digits)', 'numeric'],
-    ['country', 'Country*', 'default'],
-    ['phone', 'Phone* (10 digits)', 'phone-pad'],
-  ];
-
-  const renderTabContent = () => {
-    const isShipping = activeTab === 'shipping';
-    const addr = isShipping ? shipping : billing;
-    const isEditing = isShipping ? editShipping : editBilling;
-    const handleChange = isShipping ? handleShippingChange : handleBillingChange;
-
-    if (!isEditing) {
-      return <AddressDisplay addr={addr} />;
-    }
-
-    if (!addr) return null;
-
-    return (
-      <>
-        {addressFields.map(([field, placeholder, keyboardType]) => (
-          <AddressInput
-            key={field}
-            field={field}
-            placeholder={placeholder}
-            value={addr[field] || ''}
-            onChangeText={(text) => handleChange(field, text)}
-            keyboardType={keyboardType}
-            error={getInputError(addr, field)}
-          />
-        ))}
-      </>
-    );
-  };
 
   // Derived totals
   const subtotal = cartItems.reduce((s, it) => s + it.price * it.quantity, 0);
@@ -1377,20 +1420,10 @@ const Checkout: React.FC = () => {
                   </View>
                 </TouchableOpacity>
               ))}
-
-              {/* Payment method restrictions info */}
-              {availablePaymentMethods.some(m => !m.enabled) && (
-                <View style={styles.paymentRestrictionInfo}>
-                  <Ionicons name="information-circle" size={16} color="#666" />
-                  <Text style={styles.paymentRestrictionText}>
-                    Some payment methods are not available due to product restrictions
-                  </Text>
-                </View>
-              )}
             </View>
           )}
 
-          {/* SHIPPING METHODS - Always show with default selected */}
+          {/* SHIPPING METHODS */}
           {shippingLoading ? (
             <View style={styles.loadingSection}>
               <ActivityIndicator size="small" color={Colors.PRIMARY} />
@@ -1429,13 +1462,6 @@ const Checkout: React.FC = () => {
                   </Text>
                 </TouchableOpacity>
               ))}
-              {selectedShippingMethod && (
-                <View style={styles.selectedShippingInfo}>
-                  <Text style={styles.selectedShippingText}>
-                    Selected: {selectedShippingMethod.settings.title.value} - ₹{shippingTotal.toLocaleString()}
-                  </Text>
-                </View>
-              )}
             </View>
           ) : (
             <View style={styles.infoSection}>
@@ -1458,7 +1484,7 @@ const Checkout: React.FC = () => {
             </View>
           )}
 
-          {/* TAX BREAKDOWN - Always visible if tax rates loaded */}
+          {/* TAX BREAKDOWN */}
           {taxLoading ? (
             <View style={styles.loadingSection}>
               <ActivityIndicator size="small" color={Colors.PRIMARY} />
@@ -1466,7 +1492,6 @@ const Checkout: React.FC = () => {
             </View>
           ) : taxRates.length > 0 ? (
             <View style={styles.taxSection}>
-              {/* GST Breakdown - Always show if total > 0 */}
               {gstBreakdown.total > 0 && (
                 <>
                   <View style={styles.gstBreakdownHeader}>
@@ -1495,83 +1520,51 @@ const Checkout: React.FC = () => {
                   </View>
                 </>
               )}
-              {gstBreakdown.total === 0 && (
-                <View style={styles.totalTaxRow}>
-                  <Text style={styles.totalTaxLabel}>Total Tax</Text>
-                  <Text style={styles.totalTaxAmount}>₹0.00</Text>
-                </View>
-              )}
             </View>
-          ) : (
-            <View style={styles.infoSection}>
-              <Text style={styles.infoText}>No tax information available</Text>
-            </View>
-          )}
+          ) : null}
 
-          {/* ADDRESS TABS */}
+          {/* ADDRESS SECTION - SINGLE BILLING ADDRESS */}
           <View style={styles.section}>
-            <View style={styles.tabsRow}>
-              {(['shipping', 'billing'] as const).map((tab) => (
-                <TouchableOpacity
-                  key={tab}
-                  style={[styles.tabBtn, activeTab === tab && styles.tabBtnActive]}
-                  onPress={() => setActiveTab(tab)}
-                >
-                  <Text
-                    style={[
-                      styles.tabTxt,
-                      activeTab === tab && styles.tabTxtActive,
-                    ]}
-                  >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <Text style={styles.sectionTitle}>Billing Address</Text>
 
-            <View style={styles.checkboxRow}>
-              <Switch
-                value={sameAddress}
-                onValueChange={handleSameAddressToggle}
-                trackColor={{ false: '#ccc', true: Colors.PRIMARY + '77' }}
-                thumbColor={sameAddress ? Colors.PRIMARY : '#f4f3f4'}
-              />
-              <Text style={styles.checkboxLabel}>
-                Billing same as Shipping
-              </Text>
-            </View>
 
             <TouchableOpacity
               style={styles.editBtn}
-              onPress={() =>
-                activeTab === 'shipping'
-                  ? setEditShipping((p) => !p)
-                  : setEditBilling((p) => !p)
-              }
+              onPress={() => setEditAddress((p) => !p)}
             >
               <Text style={styles.editTxt}>
-                {(activeTab === 'shipping' ? editShipping : editBilling)
-                  ? 'Cancel'
-                  : 'Edit Address'}
+                {editAddress ? 'Cancel' : 'Edit Address'}
               </Text>
             </TouchableOpacity>
 
-            {renderTabContent()}
-
-            {((activeTab === 'shipping' && editShipping) ||
-              (activeTab === 'billing' && editBilling)) && (
+            {!editAddress ? (
+              <AddressDisplay addr={billing} />
+            ) : (
+              <>
+                {billing && addressFields.map(([field, placeholder, keyboardType]) => (
+                  <AddressInput
+                    key={field}
+                    field={field}
+                    placeholder={placeholder}
+                    value={billing[field] || ''}
+                    onChangeText={(text) => handleBillingChange(field, text)}
+                    keyboardType={keyboardType}
+                    error={getInputError(billing, field)}
+                  />
+                ))}
                 <TouchableOpacity
                   style={styles.saveBtn}
-                  onPress={() => saveAddress(activeTab)}
+                  onPress={saveAddress}
                 >
-                  <Text style={styles.saveTxt}>Save</Text>
+                  <Text style={styles.saveTxt}>Save Address</Text>
                 </TouchableOpacity>
-              )}
+              </>
+            )}
           </View>
 
           {/* SUMMARY */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Summary</Text>
+            <Text style={styles.sectionTitle}>Order Summary</Text>
             <View style={styles.summaryRow}>
               <Text>Subtotal</Text>
               <Text>₹{subtotal.toLocaleString()}</Text>
@@ -1601,7 +1594,6 @@ const Checkout: React.FC = () => {
               <Text style={styles.totalValue}>₹{total.toLocaleString()}</Text>
             </View>
 
-            {/* Payment Method Summary */}
             {selectedPaymentMethod && (
               <View style={styles.paymentSummary}>
                 <Text style={styles.paymentSummaryLabel}>Payment Method:</Text>
@@ -1648,366 +1640,3 @@ const Checkout: React.FC = () => {
 };
 
 export default Checkout;
-
-/* ---------- STYLES ---------- */
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-
-  header: {
-    marginBottom: 24,
-    backgroundColor: Colors.PRIMARY,
-    paddingVertical: 20,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    height: Dimenstion.headerHeight,
-  },
-  headerTitle: { color: Colors.WHITE, fontSize: 20, fontWeight: 'bold' },
-
-  section: { paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderColor: '#eee' },
-  sectionTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12 },
-
-  itemRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  itemImg: { width: 60, height: 60, borderRadius: 6, marginRight: 12 },
-  qtyTxt: { fontSize: 12, color: '#666' },
-  priceTxt: { fontSize: 14, fontWeight: '600' },
-
-  // Payment Method Section
-  paymentMethodSection: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  paymentMethodOption: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  selectedPaymentMethod: {
-    borderColor: Colors.PRIMARY,
-    backgroundColor: '#f0f8ff',
-  },
-  disabledPaymentMethod: {
-    borderColor: '#ddd',
-    backgroundColor: '#f9f9f9',
-    opacity: 0.6,
-  },
-  paymentMethodRadio: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#ccc',
-    marginRight: 12,
-    marginTop: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  paymentMethodRadioSelected: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: Colors.PRIMARY,
-  },
-  paymentMethodInfo: { flex: 1 },
-  paymentMethodHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  paymentMethodTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: Colors.PRIMARY,
-    marginLeft: 8,
-  },
-  paymentMethodDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
-  },
-  disabledText: {
-    color: '#999',
-  },
-  codBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#00a650',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  codBadgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  paymentRestrictionInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#fff8e1',
-    borderRadius: 8,
-  },
-  paymentRestrictionText: {
-    fontSize: 12,
-    color: '#666',
-    marginLeft: 8,
-    flex: 1,
-  },
-  paymentSummary: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  paymentSummaryLabel: { fontSize: 14, color: '#666' },
-  paymentSummaryValue: { fontSize: 14, fontWeight: '500', color: Colors.PRIMARY },
-
-  // Summary styles
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
-  discountValue: { color: '#00a650' },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-  },
-  totalLabel: { fontSize: 18, fontWeight: 'bold' },
-  totalValue: { fontSize: 20, fontWeight: 'bold', color: Colors.PRIMARY },
-
-  tabsRow: { flexDirection: 'row', marginBottom: 12 },
-  tabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderBottomWidth: 2, borderColor: 'transparent' },
-  tabBtnActive: { borderColor: Colors.PRIMARY },
-  tabTxt: { color: '#666', fontSize: 14 },
-  tabTxtActive: { color: Colors.PRIMARY, fontWeight: '600' },
-
-  checkboxRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  checkboxLabel: { marginLeft: 8, fontSize: 14, color: '#333' },
-
-  editBtn: { alignSelf: 'flex-end', marginBottom: 8 },
-  editTxt: { color: Colors.PRIMARY, fontWeight: '600' },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    padding: 10,
-    marginBottom: 4,
-    fontSize: 14,
-  },
-  inputError: {
-    borderColor: '#ff4444',
-    borderWidth: 1.5,
-  },
-  errorText: {
-    color: '#ff4444',
-    fontSize: 12,
-    marginBottom: 8,
-    marginLeft: 4,
-  },
-  addrLine: { color: '#333', lineHeight: 22 },
-  saveBtn: { backgroundColor: Colors.PRIMARY, padding: 12, borderRadius: 6, alignItems: 'center', marginTop: 8 },
-  saveTxt: { color: Colors.WHITE, fontWeight: 'bold' },
-
-  // Additional styles from Cart
-  loadingSection: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#666',
-  },
-  infoSection: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-  },
-  freeShippingText: {
-    fontSize: 12,
-    color: '#00a650',
-    marginTop: 4,
-  },
-  shippingMethodsSection: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  shippingMethodOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  selectedShippingMethod: {
-    borderColor: Colors.PRIMARY,
-    backgroundColor: '#f0f8ff',
-  },
-  shippingMethodRadio: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#ccc',
-    marginRight: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  shippingMethodRadioSelected: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: Colors.PRIMARY,
-  },
-  shippingMethodInfo: { flex: 1 },
-  shippingMethodTitle: { fontSize: 16, fontWeight: '600', marginBottom: 4 },
-  shippingMethodDescription: { fontSize: 12, color: '#666' },
-  shippingMethodCost: { fontSize: 16, fontWeight: 'bold', color: Colors.PRIMARY },
-  selectedShippingInfo: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#f0f8ff',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  selectedShippingText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: Colors.PRIMARY,
-  },
-  couponSection: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  couponItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  couponIcon: { marginRight: 8 },
-  couponCode: { fontSize: 14, fontWeight: '500', flex: 1 },
-  couponDiscount: { fontSize: 14, color: '#00a650', fontWeight: 'bold' },
-  taxSection: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  noTaxItem: {
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  noTaxText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-  },
-  taxItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  taxIcon: { marginRight: 8 },
-  taxLabel: { fontSize: 13, color: '#666', flex: 1 },
-  taxAmount: { fontSize: 13, fontWeight: '500' },
-  gstBreakdownHeader: {
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-    marginTop: 8,
-    paddingTop: 8,
-    marginBottom: 6,
-  },
-  gstBreakdownTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.PRIMARY,
-  },
-  totalTaxRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 6,
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-  },
-  totalTaxLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
-  totalTaxAmount: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.PRIMARY,
-  },
-
-  bottomContainer: {
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  placeBtn: {
-    backgroundColor: Colors.PRIMARY,
-    padding: 16,
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  placeTxt: { color: Colors.WHITE, fontSize: 16, fontWeight: 'bold' },
-
-  toast: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    backgroundColor: '#333',
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center'
-  },
-  toastTxt: { color: '#fff' },
-});

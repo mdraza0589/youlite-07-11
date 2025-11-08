@@ -1105,16 +1105,8 @@ const Cart: React.FC = () => {
               style={styles.checkoutButton}
               onPress={handleCheckout}
             >
-              <Text style={styles.checkoutText}>
-                {isSummaryVisible
-                  ? `Proceed with ${selectedPaymentMethod?.method === 'cod' ? 'COD' : 'Online Payment'}`
-                  : `Proceed to Checkout (₹${total.toLocaleString()})`
-                }
-              </Text>
+              <Text style={styles.checkoutText}>{`Proceed to Checkout (₹${total.toLocaleString()})`}</Text>
             </TouchableOpacity>
-            <Text style={styles.secureText}>
-              <Ionicons name="lock-closed" size={14} color="#666" /> Secure Checkout
-            </Text>
           </View>
         </>
       )}
@@ -1442,7 +1434,7 @@ const styles = StyleSheet.create({
 
   checkoutButton: {
     backgroundColor: Colors.PRIMARY,
-    padding: 16,
+    padding: 10,
     borderRadius: 8,
     alignItems: 'center',
     marginHorizontal: 16,

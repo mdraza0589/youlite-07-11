@@ -119,7 +119,6 @@ const MobileRegistrationScreen: React.FC = () => {
 
       const data = await response.json();
       if (data.success) {
-        Alert.alert("Success", "OTP sent to your mobile number");
         router.push({
           pathname: "/Login/VerifyOTPScreen",
           params: { mobile: cleanMobile, email, password },
