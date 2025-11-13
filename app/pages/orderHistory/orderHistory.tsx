@@ -62,7 +62,7 @@ const OrderHistory: React.FC = () => {
 
       const userId = session.user.id;
       const response = await fetch(
-        `https://youlitestore.in/wp-json/wc/v3/orders?customer=${userId}&consumer_key=${API_CONSUMER_KEY}&consumer_secret=${API_CONSUMER_SECRET}`
+        `https://youlitestore.in/wp-json/wc/v3/orders?per_page=100&customer=${userId}&consumer_key=${API_CONSUMER_KEY}&consumer_secret=${API_CONSUMER_SECRET}`
       );
       const data: Order[] = await response.json();
       setOrders(data);
@@ -197,7 +197,7 @@ const OrderHistory: React.FC = () => {
             {item.line_items.map((product: LineItem) => (
               <Image
                 key={product.id}
-                source={{ uri: product.image?.src || imagePath.image1 }}
+                source={product.image?.src ? { uri: product.image.src } : imagePath.image1}
                 style={styles.productImage}
               />
             ))}

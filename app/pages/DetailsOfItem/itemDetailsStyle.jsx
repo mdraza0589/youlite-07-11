@@ -36,7 +36,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center', alignItems: 'center',
     },
     thumbnailList: { paddingHorizontal: 10, marginTop: 10 },
-    thumbnail: { width: 60, height: 60, marginRight: 10, borderRadius: 8 },
+    // thumbnail: { width: 60, height: 60, marginRight: 10, borderRadius: 8 },
     selectedThumbnail: { borderWidth: 2, borderColor: '#4a6cf7' },
     infoSection: { backgroundColor: 'white', padding: 16, marginTop: 10 },
     productName: { fontSize: 22, fontWeight: '700', color: '#2d3748', marginBottom: 10 },
@@ -90,14 +90,12 @@ const styles = StyleSheet.create({
     categoryContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#f1f5f9',
         paddingHorizontal: 12,
         paddingVertical: 6,
         borderRadius: 16,
-        marginLeft: 'auto',
     },
     categoryText: {
-        fontSize: 14,
+        fontSize: 16,
         color: '#475569',
         marginLeft: 6,
         fontWeight: '500',
@@ -131,6 +129,9 @@ const styles = StyleSheet.create({
         borderColor: '#cbd5e0',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    pickerTextColor: {
+        color: 'black'
     },
     radioSelected: {
         borderColor: '#4a6cf7',
@@ -234,8 +235,16 @@ const styles = StyleSheet.create({
         width: width,
         height: width,
         backgroundColor: '#000',
-        position: 'relative', // Add this
+        position: 'relative',
+        borderWidth: 2,
     },
+    youtubeWrapper: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#000', // optional black background
+    },
+
     videoHero: {
         position: 'absolute', // Add this
         top: 0,
@@ -270,6 +279,45 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
         position: 'absolute',
+    },
+    videoThumbnailPlaceholder: {
+        width: 80,
+        height: 80,
+        backgroundColor: '#f0f0f0',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderRadius: 8,
+    },
+    thumbnail: {
+        width: 80,
+        height: 80,
+        borderRadius: 8,
+        marginRight: 10,
+    },
+    // For the play overlay
+    videoPlayOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.3)',
+    },
+
+    // For the video badge
+    videoBadge: {
+        position: 'absolute',
+        top: 5,
+        right: 5,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        padding: 4,
+        borderRadius: 4,
+    },
+
+    // For the hero video play button
+    videoHero: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.3)',
     },
 });
 

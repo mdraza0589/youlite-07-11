@@ -1,11 +1,4 @@
-// app/pages/Profile/ChangePassword.tsx
-// Simple “Change Password” screen that matches the look-and-feel of the existing profile pages.
-// • Three inputs: Current, New, Confirm password
-// • Basic validation (non-empty, new = confirm, min length 6)
-// • Integrated with WooCommerce API via updateCustomerById (assumes server verifies current password)
-// • Uses Ionicons + Colors utility for consistent styling
-
-import { getSession, updateCustomerById } from '@/lib/services/authService'; // Import your auth services
+import { getSession, updateCustomerById } from '@/lib/services/authService';
 import Colors from '@/utils/Colors';
 import Dimenstion from '@/utils/Dimenstion';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,7 +11,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View
+  View,
 } from 'react-native';
 
 export default function ChangePassword() {
@@ -28,6 +21,11 @@ export default function ChangePassword() {
   const [newPwd, setNewPwd] = useState('');
   const [confirmPwd, setConfirmPwd] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // 👁️ Show/hide state for each password input
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const validate = () => {
     if (!currentPwd || !newPwd || !confirmPwd) {
@@ -51,8 +49,8 @@ export default function ChangePassword() {
 
   const handleSubmit = async () => {
     if (!validate()) return;
-
     setSubmitting(true);
+
     try {
       const session = await getSession();
       if (!session?.user?.id) {
@@ -61,14 +59,9 @@ export default function ChangePassword() {
         return;
       }
 
-      // Call updateCustomerById to change password
-      // Note: WooCommerce API allows updating password directly, but current password verification should be handled server-side
-      // If your backend requires current password, modify the API to accept it and verify
       const response = await updateCustomerById(session.user.id, { password: newPwd });
 
-      // Check if update was successful (adjust based on your API response structure)
       if (response && response.id) {
-        console.log('Password update successful:', response);
         Alert.alert('Success', 'Password changed successfully.');
         router.back();
       } else {
@@ -82,22 +75,36 @@ export default function ChangePassword() {
     }
   };
 
+  // 🔤 Reusable input with show/hide toggle
   const renderInput = (
     label: string,
     value: string,
     onChange: (t: string) => void,
-    placeholder: string
+    placeholder: string,
+    show: boolean,
+    setShow: (b: boolean) => void
   ) => (
     <View style={styles.inputGroup}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput
-        style={styles.input}
-        placeholder={placeholder}
-        value={value}
-        onChangeText={onChange}
-        secureTextEntry
-        editable={!submitting}
-      />
+      <View style={styles.inputWrapper}>
+        <TextInput
+          style={[styles.input, { flex: 1 }]}
+          placeholder={placeholder}
+          value={value}
+          onChangeText={onChange}
+          secureTextEntry={!show}
+          editable={!submitting}
+          placeholderTextColor='gray'
+        />
+        <TouchableOpacity onPress={() => setShow(!show)}>
+          <Ionicons
+            name={show ? 'eye' : 'eye-off'}
+            size={22}
+            color="#888"
+            style={{ paddingHorizontal: 6 }}
+          />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -109,13 +116,14 @@ export default function ChangePassword() {
           <Ionicons name="arrow-back" size={24} color={Colors.WHITE} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Change Password</Text>
+        <View />
       </View>
 
       {/* Form */}
       <View style={styles.form}>
-        {renderInput('Current Password', currentPwd, setCurrentPwd, 'Current password')}
-        {renderInput('New Password', newPwd, setNewPwd, 'New password')}
-        {renderInput('Confirm New Password', confirmPwd, setConfirmPwd, 'Confirm new password')}
+        {renderInput('Current Password', currentPwd, setCurrentPwd, 'Current password', showCurrent, setShowCurrent)}
+        {renderInput('New Password', newPwd, setNewPwd, 'New password', showNew, setShowNew)}
+        {renderInput('Confirm New Password', confirmPwd, setConfirmPwd, 'Confirm new password', showConfirm, setShowConfirm)}
 
         <TouchableOpacity
           style={[styles.button, submitting && styles.buttonDisabled]}
@@ -148,7 +156,6 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 20,
     height: Dimenstion.headerHeight,
   },
-  
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
@@ -158,14 +165,20 @@ const styles = StyleSheet.create({
   form: { flex: 1, padding: 20 },
   inputGroup: { marginBottom: 20 },
   label: { fontSize: 14, fontWeight: '600', color: '#222', marginBottom: 6 },
-  input: {
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#fff',
     borderRadius: 10,
-    padding: 14,
-    fontSize: 16,
     borderWidth: 1,
     borderColor: '#eee',
     elevation: 1,
+    paddingRight: 6,
+  },
+  input: {
+    padding: 14,
+    fontSize: 16,
+    color:'black'
   },
   button: {
     backgroundColor: Colors.PRIMARY,
@@ -177,3 +190,4 @@ const styles = StyleSheet.create({
   buttonDisabled: { backgroundColor: '#999' },
   buttonText: { color: Colors.WHITE, fontSize: 16, fontWeight: '600' },
 });
+

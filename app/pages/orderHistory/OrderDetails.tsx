@@ -42,6 +42,7 @@ const OrderDetails = () => {
   const [loading, setLoading] = useState(true);
   const [isCancelling, setIsCancelling] = useState(false);
   const [shipmentTracking, setShipmentTracking] = useState<ShipmentTracking | null>(null);
+  const [pressedItem, setPressedItem] = useState<string | null>(null);
 
   // --- Fetch Order Details ---
   const fetchOrderDetails = async () => {
@@ -325,18 +326,38 @@ const OrderDetails = () => {
           </View>
         )}
 
-        
-
         {/* Products */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Order Items</Text>
           {line_items?.map((item: any, index: number) => (
-            <View
+            <TouchableOpacity
               key={item.id}
               style={[
                 styles.productContainer,
-                index > 0 && { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: "#E5E7EB" },
+                index > 0 && {
+                  marginTop: 12,
+                  paddingTop: 12,
+                  borderTopWidth: 1,
+                  borderTopColor: "#E5E7EB"
+                },
+                pressedItem === item.id.toString() && styles.pressedItem,
               ]}
+              onPressIn={() => setPressedItem(item.id.toString())}
+              onPressOut={() => setPressedItem(null)}
+              onPress={() => {
+                if (item.product_id) {
+                  router.push({
+                    pathname: '/pages/DetailsOfItem/ItemDetails',
+                    params: {
+                      id: item.product_id.toString(),
+                      title: item.name
+                    }
+                  });
+                } else {
+                  Alert.alert('Info', 'Product details not available');
+                }
+              }}
+              activeOpacity={0.7}
             >
               <Image
                 source={{ uri: item.image?.src || imagePath.image1 }}
@@ -354,7 +375,13 @@ const OrderDetails = () => {
                   Subtotal: ₹{item.total}
                 </Text>
               </View>
-            </View>
+              <Ionicons
+                name="chevron-forward"
+                size={20}
+                color="#9CA3AF"
+                style={styles.chevronIcon}
+              />
+            </TouchableOpacity>
           ))}
 
           {/* Price Breakdown */}
@@ -571,6 +598,13 @@ const styles = StyleSheet.create({
   productContainer: {
     flexDirection: "row",
     marginTop: 12,
+    alignItems: "center",
+  },
+  pressedItem: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 8,
+    padding: 8,
+    margin: -8,
   },
   productImage: {
     width: 90,
@@ -582,6 +616,7 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     justifyContent: "space-between",
     flex: 1,
+    paddingRight: 8,
   },
   productName: {
     fontSize: 15,
@@ -593,6 +628,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+    marginTop: 4,
   },
   productPrice: {
     fontSize: 16,
@@ -611,6 +647,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#374151",
     fontWeight: "500",
+    marginTop: 4,
+  },
+  chevronIcon: {
+    marginLeft: 8,
   },
   priceBreakdown: {
     marginTop: 16,
@@ -680,4 +720,3 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 });
-

@@ -5,7 +5,9 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Animated,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -23,7 +25,9 @@ const VerifyOTPScreen = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [timer, setTimer] = useState(30); // Changed to 30 seconds
   const [canResend, setCanResend] = useState(false);
-
+  const [showSuccessScreen, setShowSuccessScreen] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const scaleAnim = useRef(new Animated.Value(0)).current;
   // Refs for OTP inputs
   const inputRefs = useRef<(TextInput | null)[]>([]);
 
@@ -110,18 +114,31 @@ const VerifyOTPScreen = () => {
           token: jwtToken,
         });
 
-        Alert.alert(
-          "Success",
+        // Set success message and show success screen
+        setSuccessMessage(
           data.is_new_user
             ? "Account created successfully!"
-            : "Login successful!",
-          [
-            {
-              text: "OK",
-              onPress: () => router.replace("/(tabs)"),
-            },
-          ]
+            : "Login successful!"
         );
+
+        // Reset animation and show success screen
+        scaleAnim.setValue(0);
+        setShowSuccessScreen(true);
+
+        // Animate the checkmark
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 100,
+          friction: 8,
+          useNativeDriver: true,
+        }).start();
+
+        // Hide success screen and navigate after 1 second
+        setTimeout(() => {
+          setShowSuccessScreen(false);
+          router.replace("/(tabs)");
+        }, 2000);
+
       } else {
         Alert.alert(
           "Error",
@@ -281,6 +298,46 @@ const VerifyOTPScreen = () => {
           </View>
         </View>
       </ScrollView>
+      {/* Success Screen */}
+      {showSuccessScreen && (
+        <Modal
+          visible={showSuccessScreen}
+          transparent={true}
+          animationType="fade"
+          statusBarTranslucent={true}
+        >
+          <View style={styles.successContainer}>
+            <View style={styles.successContent}>
+              {/* Animated Checkmark */}
+              <View style={styles.checkmarkContainer}>
+                <Animated.View
+                  style={[
+                    styles.checkmarkCircle,
+                    {
+                      transform: [{ scale: scaleAnim }]
+                    }
+                  ]}
+                >
+                  <Ionicons name="checkmark" size={60} color={Colors.WHITE} />
+                </Animated.View>
+              </View>
+
+              {/* Success Text */}
+              <Text style={styles.successTitle}>Success!</Text>
+              <Text style={styles.successSubtitle}>
+                {successMessage}
+              </Text>
+
+              {/* Loading Dots */}
+              <View style={styles.loadingDots}>
+                <View style={styles.dot} />
+                <View style={styles.dot} />
+                <View style={styles.dot} />
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </KeyboardAvoidingView>
   );
 };
@@ -397,6 +454,76 @@ const styles = StyleSheet.create({
     color: "#666",
     textAlign: "center",
     flex: 1,
+  },
+  successContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  successContent: {
+    backgroundColor: Colors.WHITE,
+    borderRadius: 20,
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 300,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  checkmarkContainer: {
+    marginBottom: 30,
+  },
+  checkmarkCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: Colors.PRIMARY,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: Colors.PRIMARY,
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  successTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: Colors.PRIMARY,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  successSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 30,
+    lineHeight: 22,
+  },
+  loadingDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.PRIMARY,
+    marginHorizontal: 5,
+    opacity: 0.6,
   },
 });
 

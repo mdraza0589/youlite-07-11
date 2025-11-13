@@ -8,6 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useState } from 'react';
 import styles from './CheckoutStyle';
+import { Alert } from 'react-native';
 
 import {
   ActivityIndicator,
@@ -25,6 +26,7 @@ import {
 import RazorpayCheckout from 'react-native-razorpay';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Loading from '@/app/components/Loading';
 
 /* ---------- TYPES ---------- */
 interface CartItem {
@@ -1013,9 +1015,6 @@ const Checkout: React.FC = () => {
     let wooCommerceOrderId: number | null = null;
 
     try {
-      // Step 1: Create WooCommerce Order
-      console.log('📦 Creating WooCommerce Order...');
-
       // Derived totals
       const subtotal = cartItems.reduce((s, it) => s + it.price * it.quantity, 0);
       const saleDiscount = cartItems.reduce(
@@ -1024,121 +1023,97 @@ const Checkout: React.FC = () => {
       );
       const couponDiscount = calcCouponDiscount(subtotal, appliedCoupons);
       const shippingTotal = shippingLines.reduce((total, line) => total + toNum(line.total), 0);
-
-      // Tax calculations
       const itemTaxTotal = taxCalculation.tax_total || 0;
       const shippingTaxTotal = taxCalculation.shipping_tax_total || 0;
       const totalTax = itemTaxTotal + shippingTaxTotal;
-
       const total = subtotal - couponDiscount + shippingTotal + totalTax;
 
-      const orderPayload = {
-        customer_id: userId,
-        payment_method: selectedPaymentMethod,
-        payment_method_title: selectedMethod.gateway.title,
-        set_paid: selectedPaymentMethod === 'cod' ? false : true,
-        status: selectedPaymentMethod === 'cod' ? 'processing' : 'pending',
-        billing: billing,
-        shipping: shipping,
-        line_items: cartItems.map((item) => ({
-          product_id: Number(item.id),
-          quantity: item.quantity,
-        })),
-        shipping_lines: shippingLines.map(line => ({
-          method_id: line.method_id,
-          method_title: line.method_title,
-          total: line.total,
-        })),
-        meta_data: appliedCoupons.length > 0 ? [{
-          key: 'applied_coupons',
-          value: appliedCoupons
-        }] : [],
-      };
-
-      const wooCommerceOrder = await createOrder(orderPayload);
-
-      if (!wooCommerceOrder?.id) {
-        throw new Error('Failed to create WooCommerce order');
-      }
-
-      wooCommerceOrderId = wooCommerceOrder.id;
-      console.log('✅ WooCommerce Order Created. ID:', wooCommerceOrderId);
-
-      // Step 2: Handle COD orders - direct completion
+      // 🧾 Handle COD Orders Immediately
       if (selectedPaymentMethod === 'cod') {
-        console.log('💰 COD Order - Completing without payment...');
+        Alert.alert(
+          'Confirm Order',
+          'Do you want to continue to order this product?',
+          [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: 'Continue',
+              onPress: async () => {
+                console.log('💰 COD Order - Creating WooCommerce Order...');
 
-        // Clear cart for COD orders too
-        if (params.buyNow !== 'true') {
-          console.log('🛒 Clearing cart...');
-          await updateCustomerById(userId, {
-            meta_data: [{ key: 'cart', value: [] }]
-          });
-          console.log('✅ Cart cleared');
-        }
+                const orderPayload = {
+                  customer_id: userId,
+                  payment_method: selectedPaymentMethod,
+                  payment_method_title: selectedMethod.gateway.title,
+                  set_paid: false,
+                  status: 'processing',
+                  billing,
+                  shipping,
+                  line_items: cartItems.map(item => ({
+                    product_id: Number(item.id),
+                    quantity: item.quantity,
+                  })),
+                  shipping_lines: shippingLines.map(line => ({
+                    method_id: line.method_id,
+                    method_title: line.method_title,
+                    total: line.total,
+                  })),
+                  meta_data: appliedCoupons.length > 0 ? [{
+                    key: 'applied_coupons',
+                    value: appliedCoupons
+                  }] : [],
+                };
 
-        showToast('COD order placed successfully!');
-        console.log('🎉 COD ORDER COMPLETED!');
+                const wooOrder = await createOrder(orderPayload);
+                const wooCommerceOrderId = wooOrder.id;
+                console.log('✅ COD WooCommerce Order Created. ID:', wooCommerceOrderId);
 
-        setTimeout(() => {
-          router.replace({
-            pathname: '/pages/orderHistory/orderHistory',
-            params: {
-              orderId: wooCommerceOrder.id.toString()
-            }
-          });
-        }, 1500);
-        return;
+                if (params.buyNow !== 'true') {
+                  await updateCustomerById(userId, { meta_data: [{ key: 'cart', value: [] }] });
+                  console.log('✅ Cart cleared');
+                }
+
+                showToast('COD order placed successfully!');
+                router.replace({
+                  pathname: '/pages/orderHistory/orderHistory',
+                  params: { orderId: wooOrder.id.toString() },
+                });
+              },
+            },
+          ],
+          { cancelable: true }
+        );
+
+        return; // ✅ Important: prevent continuing to Razorpay section
       }
 
-      // Step 3: Handle Razorpay orders - create Razorpay order
+
+      // 💳 Handle Online Payment First
       console.log('💳 Creating Razorpay Order...');
 
-      // FIX: Correct amount conversion - multiply by 100 to convert rupees to paise
       const amountInPaise = Math.round(total);
-
       const razorpayOrderPayload = {
         amount: amountInPaise,
         currency: 'INR',
-        receipt: `rcpt_${wooCommerceOrder.id}_${Date.now()}`,
+        receipt: `rcpt_${userId}_${Date.now()}`,
         notes: {
-          woo_order_id: wooCommerceOrder.id.toString(),
           customer_id: userId.toString(),
-        }
+        },
       };
 
-      console.log('Razorpay Order Payload:', razorpayOrderPayload);
-      console.log('Total amount (₹):', total);
-      console.log('Amount in paise:', amountInPaise);
-
       const razorpayOrder = await createRazorpayOrder(razorpayOrderPayload);
-
-      console.log('Razorpay Order Response:', razorpayOrder);
-
-      if (!razorpayOrder?.success) {
-        console.error('❌ Razorpay order creation failed:', razorpayOrder);
-        throw new Error('Failed to create Razorpay order');
-      }
+      if (!razorpayOrder?.success) throw new Error('Failed to create Razorpay order');
 
       const razorpayOrderId = razorpayOrder.razorpay_order_id;
-
-      if (!razorpayOrderId) {
-        console.error('❌ No Razorpay order ID in response:', razorpayOrder);
-        throw new Error('Invalid Razorpay order response');
-      }
-
       console.log('✅ Razorpay Order ID:', razorpayOrderId);
-
-      // Step 4: Prepare Razorpay Checkout
-      console.log('🔐 Preparing Razorpay Checkout...');
 
       const cleanPhone = billing?.phone?.replace(/\D/g, '') || '';
       const validPhone = cleanPhone.length === 10 ? cleanPhone : '';
-
       const validEmail = billing?.email && validateEmail(billing.email)
         ? billing.email
         : '';
-
       const fullName = `${billing?.first_name || ''} ${billing?.last_name || ''}`.trim();
 
       const prefillData: any = {};
@@ -1146,136 +1121,82 @@ const Checkout: React.FC = () => {
       if (validPhone) prefillData.contact = validPhone;
       if (fullName) prefillData.name = fullName;
 
-      console.log('Prefill Data:', prefillData);
-
       const options = {
-        description: `Order #${wooCommerceOrder.id}`,
+        description: `Order function called`,
         image: 'https://youlite.in/wp-content/uploads/2022/06/short-logo.png',
         currency: 'INR',
         key: razorpayOrder.key_id || 'rzp_live_Rd7weWo8FeoLOm',
-        amount: amountInPaise, // ← REMOVE .toString() from this line
+        amount: amountInPaise,
         name: 'YouLite Store',
-        order_id: razorpayOrderId,
+        order_id: razorpayOrderId || '', // ✅ fixed here
         prefill: prefillData,
         theme: { color: Colors.PRIMARY },
         notes: {
-          woo_order_id: wooCommerceOrder.id.toString(),
-          customer_id: userId.toString()
-        }
+          customer_id: userId.toString(),
+        },
       };
 
-      console.log('Razorpay Checkout Options:', {
-        ...options,
-        key: options.key.substring(0, 10) + '...',
-        amount: options.amount
-      });
 
       console.log('🚀 Opening Razorpay Checkout...');
-
       RazorpayCheckout.open(options).then(async (paymentData) => {
         console.log('✅ Payment Success:', paymentData);
 
-        // Step 5: Verify payment
-        console.log('🔍 Verifying payment...');
-        const verificationPayload = {
-          order_id: wooCommerceOrder.id,
-          razorpay_payment_id: paymentData.razorpay_payment_id,
-          razorpay_order_id: paymentData.razorpay_order_id,
-          razorpay_signature: paymentData.razorpay_signature
+        // ✅ NOW Create WooCommerce Order after payment
+        console.log('📦 Creating WooCommerce Order (Post-Payment)...');
+
+        const orderPayload = {
+          customer_id: userId,
+          payment_method: selectedPaymentMethod,
+          payment_method_title: selectedMethod.gateway.title,
+          set_paid: true,
+          status: 'processing',
+          billing,
+          shipping,
+          line_items: cartItems.map(item => ({
+            product_id: Number(item.id),
+            quantity: item.quantity,
+          })),
+          shipping_lines: shippingLines.map(line => ({
+            method_id: line.method_id,
+            method_title: line.method_title,
+            total: line.total,
+          })),
+          meta_data: [
+            ...(appliedCoupons.length > 0 ? [{ key: 'applied_coupons', value: appliedCoupons }] : []),
+            { key: 'razorpay_payment_id', value: paymentData.razorpay_payment_id },
+          ],
         };
 
-        console.log('Verification Payload:', verificationPayload);
-        const verificationResult = await processRazorpayPayment(verificationPayload);
+        const wooOrder = await createOrder(orderPayload);
+        wooCommerceOrderId = wooOrder.id;
+        console.log('✅ WooCommerce Order Created after payment. ID:', wooCommerceOrderId);
 
-        console.log('✅ Payment verified:', verificationResult);
-
-        // Step 6: Clear cart
+        // Clear cart
         if (params.buyNow !== 'true') {
-          console.log('🛒 Clearing cart...');
-          await updateCustomerById(userId, {
-            meta_data: [{ key: 'cart', value: [] }]
-          });
+          await updateCustomerById(userId, { meta_data: [{ key: 'cart', value: [] }] });
           console.log('✅ Cart cleared');
         }
 
         showToast('Order placed successfully!');
-        console.log('🎉 ORDER COMPLETED!');
-
-        setTimeout(() => {
-          router.replace({
-            pathname: '/pages/orderHistory/orderHistory',
-            params: {
-              orderId: wooCommerceOrder.id.toString()
-            }
-          });
-        }, 1500);
+        router.replace({
+          pathname: '/pages/orderHistory/orderHistory',
+          params: { orderId: wooOrder.id.toString() }
+        });
 
       }).catch((error) => {
         console.error('❌ RAZORPAY PAYMENT ERROR:', error);
-
-        if (error.code !== undefined) {
-          console.error('Razorpay Error Code:', error.code);
-          console.error('Razorpay Error Description:', error.description);
-
-          switch (error.code) {
-            case 0:
-              showToast('Network error. Please check your connection');
-              break;
-            case 1:
-              showToast(error.description || 'Payment failed');
-              break;
-            case 2:
-              showToast('Payment cancelled by user');
-              break;
-            case 3:
-              showToast('Payment processing failed');
-              break;
-            default:
-              showToast('Payment error. Please try again');
-          }
-        } else if (error.description) {
-          showToast(error.description);
-        } else if (error.message) {
-          showToast(error.message);
-        } else {
-          showToast('Failed to process payment. Please try again');
-        }
+        showToast('Payment failed or cancelled');
       });
 
     } catch (error: any) {
       console.error('❌ ORDER ERROR:', error);
-      console.error('Error stack:', error.stack);
-
-      if (error.code !== undefined) {
-        switch (error.code) {
-          case 0:
-            showToast('Network error. Please check your connection');
-            break;
-          case 1:
-            showToast(error.description || 'Payment failed');
-            break;
-          case 2:
-            showToast('Payment cancelled by user');
-            break;
-          default:
-            showToast('Payment error. Please try again');
-        }
-      } else if (error.description) {
-        showToast(error.description);
-      } else if (error.message) {
-        showToast(error.message);
-      } else {
-        showToast('Failed to process payment. Please try again');
-      }
-
-      if (wooCommerceOrderId) {
-        console.log('⚠️ Order created but payment failed. Order ID:', wooCommerceOrderId);
-      }
+      showToast(error.message || 'Failed to place order');
     } finally {
       setPlacingOrder(false);
       console.log('=== PLACE ORDER ENDED ===');
     }
   };
+
 
 
   // Derived totals
@@ -1305,7 +1226,7 @@ const Checkout: React.FC = () => {
     return (
       <View style={styles.loader}>
         <Animated.View style={animatedStyle}>
-          <ActivityIndicator size="large" color={Colors.PRIMARY} />
+          <Loading />
         </Animated.View>
       </View>
     );
@@ -1333,277 +1254,281 @@ const Checkout: React.FC = () => {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 80 }}
         >
-          {/* ORDER ITEMS */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Order Items</Text>
-            {cartItems.length === 0 ? (
-              <Text style={{ color: '#666' }}>Your cart is empty</Text>
-            ) : (
-              cartItems.map((item) => (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.itemRow}
-                  activeOpacity={0.8}
-                  onPress={() =>
-                    router.push({
-                      pathname: '/pages/DetailsOfItem/ItemDetails',
-                      params: {
-                        id: item.id,
-                        title: item.name,
-                      },
-                    })
-                  }
-                >
-                  <Image source={item.image} style={styles.itemImg} />
-                  <View style={{ flex: 1 }}>
-                    <Text numberOfLines={1}>{item.name}</Text>
-                    <Text style={styles.qtyTxt}>Qty: {item.quantity} | Size: {item.size} | Color: {item.color}</Text>
-                  </View>
-                  <Text style={styles.priceTxt}>
-                    ₹{(item.price * item.quantity).toFixed(2)}
-                  </Text>
-                </TouchableOpacity>
-              ))
-            )}
-          </View>
+          <View>
 
-          {/* PAYMENT METHOD SECTION */}
-          {availablePaymentMethods.length > 0 && (
-            <View style={styles.paymentMethodSection}>
-              <Text style={styles.sectionTitle}>Select Payment Method</Text>
-              {availablePaymentMethods.map((method) => (
-                <TouchableOpacity
-                  key={method.method}
-                  style={[
-                    styles.paymentMethodOption,
-                    selectedPaymentMethod === method.method && styles.selectedPaymentMethod,
-                    !method.enabled && styles.disabledPaymentMethod
-                  ]}
-                  onPress={() => {
-                    if (method.enabled) {
-                      setSelectedPaymentMethod(method.method);
+            {/* ORDER ITEMS */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Order Items</Text>
+              {cartItems.length === 0 ? (
+                <Text style={{ color: '#666' }}>Your cart is empty</Text>
+              ) : (
+                cartItems.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.itemRow}
+                    activeOpacity={0.8}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/pages/DetailsOfItem/ItemDetails',
+                        params: {
+                          id: item.id,
+                          title: item.name,
+                        },
+                      })
                     }
-                  }}
-                  disabled={!method.enabled}
-                >
-                  <View style={styles.paymentMethodRadio}>
-                    {selectedPaymentMethod === method.method && (
-                      <View style={styles.paymentMethodRadioSelected} />
-                    )}
-                  </View>
-                  <View style={styles.paymentMethodInfo}>
-                    <View style={styles.paymentMethodHeader}>
-                      <Ionicons
-                        name={method.method === 'cod' ? 'cash' : 'card'}
-                        size={20}
-                        color={method.enabled ? Colors.PRIMARY : '#999'}
-                      />
+                  >
+                    <Image source={item.image} style={styles.itemImg} />
+                    <View style={{ flex: 1 }}>
+                      <Text numberOfLines={1}>{item.name}</Text>
+                      <Text style={styles.qtyTxt}>Qty: {item.quantity} | Size: {item.size} | Color: {item.color}</Text>
+                    </View>
+                    <Text style={styles.priceTxt}>
+                      ₹{(item.price * item.quantity).toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+
+            {/* PAYMENT METHOD SECTION */}
+            {availablePaymentMethods.length > 0 && (
+              <View style={styles.paymentMethodSection}>
+                <Text style={styles.sectionTitle}>Select Payment Method</Text>
+                {availablePaymentMethods.map((method) => (
+                  <TouchableOpacity
+                    key={method.method}
+                    style={[
+                      styles.paymentMethodOption,
+                      selectedPaymentMethod === method.method && styles.selectedPaymentMethod,
+                      !method.enabled && styles.disabledPaymentMethod
+                    ]}
+                    onPress={() => {
+                      if (method.enabled) {
+                        setSelectedPaymentMethod(method.method);
+                      }
+                    }}
+                    disabled={!method.enabled}
+                  >
+                    <View style={styles.paymentMethodRadio}>
+                      {selectedPaymentMethod === method.method && (
+                        <View style={styles.paymentMethodRadioSelected} />
+                      )}
+                    </View>
+                    <View style={styles.paymentMethodInfo}>
+                      <View style={styles.paymentMethodHeader}>
+                        <Ionicons
+                          name={method.method === 'cod' ? 'cash' : 'card'}
+                          size={20}
+                          color={method.enabled ? Colors.PRIMARY : '#999'}
+                        />
+                        <Text style={[
+                          styles.paymentMethodTitle,
+                          !method.enabled && styles.disabledText
+                        ]}>
+                          {method.gateway.title}
+                          {!method.enabled && ' (Not Available)'}
+                        </Text>
+                      </View>
                       <Text style={[
-                        styles.paymentMethodTitle,
+                        styles.paymentMethodDescription,
                         !method.enabled && styles.disabledText
                       ]}>
-                        {method.gateway.title}
-                        {!method.enabled && ' (Not Available)'}
+                        {method.description}
+                      </Text>
+                      {method.method === 'cod' && method.enabled && (
+                        <View style={styles.codBadge}>
+                          <Text style={styles.codBadgeText}>Pay on Delivery</Text>
+                        </View>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* SHIPPING METHODS */}
+            {shippingLoading ? (
+              <View style={styles.loadingSection}>
+                <ActivityIndicator size="small" color={Colors.PRIMARY} />
+                <Text style={styles.loadingText}>Loading shipping methods...</Text>
+              </View>
+            ) : shippingMethods.length > 0 ? (
+              <View style={styles.shippingMethodsSection}>
+                <Text style={styles.sectionTitle}>Choose Shipping Method</Text>
+                {shippingMethods.map((method) => (
+                  <TouchableOpacity
+                    key={method.instance_id}
+                    style={[
+                      styles.shippingMethodOption,
+                      selectedShippingMethod?.instance_id === method.instance_id && styles.selectedShippingMethod
+                    ]}
+                    onPress={() => {
+                      setSelectedShippingMethod(method);
+                      const shippingData = calculateShippingLines([method], cartItems);
+                      setShippingLines(shippingData);
+                      updateTaxCalculation(cartItems, shippingData);
+                    }}
+                  >
+                    <View style={styles.shippingMethodRadio}>
+                      {selectedShippingMethod?.instance_id === method.instance_id && (
+                        <View style={styles.shippingMethodRadioSelected} />
+                      )}
+                    </View>
+                    <View style={styles.shippingMethodInfo}>
+                      <Text style={styles.shippingMethodTitle}>{method.settings.title.value}</Text>
+                      <Text style={styles.shippingMethodDescription}>
+                        {method.method_description.replace(/<[^>]*>/g, '')}
                       </Text>
                     </View>
-                    <Text style={[
-                      styles.paymentMethodDescription,
-                      !method.enabled && styles.disabledText
-                    ]}>
-                      {method.description}
+                    <Text style={styles.shippingMethodCost}>
+                      ₹{calculateShippingCost(method, cartItems).toLocaleString()}
                     </Text>
-                    {method.method === 'cod' && method.enabled && (
-                      <View style={styles.codBadge}>
-                        <Text style={styles.codBadgeText}>Pay on Delivery</Text>
-                      </View>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.infoSection}>
+                <Text style={styles.infoText}>Free Shipping</Text>
+                <Text style={styles.freeShippingText}>No additional shipping cost</Text>
+              </View>
+            )}
 
-          {/* SHIPPING METHODS */}
-          {shippingLoading ? (
-            <View style={styles.loadingSection}>
-              <ActivityIndicator size="small" color={Colors.PRIMARY} />
-              <Text style={styles.loadingText}>Loading shipping methods...</Text>
-            </View>
-          ) : shippingMethods.length > 0 ? (
-            <View style={styles.shippingMethodsSection}>
-              <Text style={styles.sectionTitle}>Choose Shipping Method</Text>
-              {shippingMethods.map((method) => (
-                <TouchableOpacity
-                  key={method.instance_id}
-                  style={[
-                    styles.shippingMethodOption,
-                    selectedShippingMethod?.instance_id === method.instance_id && styles.selectedShippingMethod
-                  ]}
-                  onPress={() => {
-                    setSelectedShippingMethod(method);
-                    const shippingData = calculateShippingLines([method], cartItems);
-                    setShippingLines(shippingData);
-                    updateTaxCalculation(cartItems, shippingData);
-                  }}
-                >
-                  <View style={styles.shippingMethodRadio}>
-                    {selectedShippingMethod?.instance_id === method.instance_id && (
-                      <View style={styles.shippingMethodRadioSelected} />
-                    )}
+            {/* APPLIED COUPONS */}
+            {appliedCoupons.length > 0 && (
+              <View style={styles.couponSection}>
+                <Text style={styles.sectionTitle}>Applied Coupons</Text>
+                {appliedCoupons.map((c) => (
+                  <View key={c.code} style={styles.couponItem}>
+                    <Ionicons name="pricetag" size={18} color={Colors.PRIMARY} style={styles.couponIcon} />
+                    <Text style={styles.couponCode}>{c.code.toUpperCase()}</Text>
+                    <Text style={styles.couponDiscount}>-₹{toNum(c.amount).toFixed(2)}</Text>
                   </View>
-                  <View style={styles.shippingMethodInfo}>
-                    <Text style={styles.shippingMethodTitle}>{method.settings.title.value}</Text>
-                    <Text style={styles.shippingMethodDescription}>
-                      {method.method_description.replace(/<[^>]*>/g, '')}
-                    </Text>
-                  </View>
-                  <Text style={styles.shippingMethodCost}>
-                    ₹{calculateShippingCost(method, cartItems).toLocaleString()}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : (
-            <View style={styles.infoSection}>
-              <Text style={styles.infoText}>Free Shipping</Text>
-              <Text style={styles.freeShippingText}>No additional shipping cost</Text>
-            </View>
-          )}
+                ))}
+              </View>
+            )}
 
-          {/* APPLIED COUPONS */}
-          {appliedCoupons.length > 0 && (
-            <View style={styles.couponSection}>
-              <Text style={styles.sectionTitle}>Applied Coupons</Text>
-              {appliedCoupons.map((c) => (
-                <View key={c.code} style={styles.couponItem}>
-                  <Ionicons name="pricetag" size={18} color={Colors.PRIMARY} style={styles.couponIcon} />
-                  <Text style={styles.couponCode}>{c.code.toUpperCase()}</Text>
-                  <Text style={styles.couponDiscount}>-₹{toNum(c.amount).toFixed(2)}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* TAX BREAKDOWN */}
-          {taxLoading ? (
-            <View style={styles.loadingSection}>
-              <ActivityIndicator size="small" color={Colors.PRIMARY} />
-              <Text style={styles.loadingText}>Loading tax information...</Text>
-            </View>
-          ) : taxRates.length > 0 ? (
-            <View style={styles.taxSection}>
-              {gstBreakdown.total > 0 && (
-                <>
-                  <View style={styles.gstBreakdownHeader}>
-                    <Text style={styles.gstBreakdownTitle}>GST Breakdown</Text>
-                  </View>
-                  <View style={styles.taxItem}>
-                    <Ionicons name="business" size={16} color={Colors.PRIMARY} style={styles.taxIcon} />
-                    <Text style={styles.taxLabel}>CGST</Text>
-                    <Text style={styles.taxAmount}>₹{gstBreakdown.cgst.toFixed(2)}</Text>
-                  </View>
-                  <View style={styles.taxItem}>
-                    <Ionicons name="business" size={16} color={Colors.PRIMARY} style={styles.taxIcon} />
-                    <Text style={styles.taxLabel}>SGST</Text>
-                    <Text style={styles.taxAmount}>₹{gstBreakdown.sgst.toFixed(2)}</Text>
-                  </View>
-                  {gstBreakdown.igst > 0 && (
+            {/* TAX BREAKDOWN */}
+            {taxLoading ? (
+              <View style={styles.loadingSection}>
+                <ActivityIndicator size="small" color={Colors.PRIMARY} />
+                <Text style={styles.loadingText}>Loading tax information...</Text>
+              </View>
+            ) : taxRates.length > 0 ? (
+              <View style={styles.taxSection}>
+                {gstBreakdown.total > 0 && (
+                  <>
+                    <View style={styles.gstBreakdownHeader}>
+                      <Text style={styles.gstBreakdownTitle}>GST Breakdown</Text>
+                    </View>
                     <View style={styles.taxItem}>
                       <Ionicons name="business" size={16} color={Colors.PRIMARY} style={styles.taxIcon} />
-                      <Text style={styles.taxLabel}>IGST</Text>
-                      <Text style={styles.taxAmount}>₹{gstBreakdown.igst.toFixed(2)}</Text>
+                      <Text style={styles.taxLabel}>CGST</Text>
+                      <Text style={styles.taxAmount}>₹{gstBreakdown.cgst.toFixed(2)}</Text>
                     </View>
-                  )}
-                  <View style={styles.totalTaxRow}>
-                    <Text style={styles.totalTaxLabel}>Total Tax</Text>
-                    <Text style={styles.totalTaxAmount}>₹{gstBreakdown.total.toFixed(2)}</Text>
-                  </View>
+                    <View style={styles.taxItem}>
+                      <Ionicons name="business" size={16} color={Colors.PRIMARY} style={styles.taxIcon} />
+                      <Text style={styles.taxLabel}>SGST</Text>
+                      <Text style={styles.taxAmount}>₹{gstBreakdown.sgst.toFixed(2)}</Text>
+                    </View>
+                    {gstBreakdown.igst > 0 && (
+                      <View style={styles.taxItem}>
+                        <Ionicons name="business" size={16} color={Colors.PRIMARY} style={styles.taxIcon} />
+                        <Text style={styles.taxLabel}>IGST</Text>
+                        <Text style={styles.taxAmount}>₹{gstBreakdown.igst.toFixed(2)}</Text>
+                      </View>
+                    )}
+                    <View style={styles.totalTaxRow}>
+                      <Text style={styles.totalTaxLabel}>Total Tax</Text>
+                      <Text style={styles.totalTaxAmount}>₹{gstBreakdown.total.toFixed(2)}</Text>
+                    </View>
+                  </>
+                )}
+              </View>
+            ) : null}
+
+            {/* ADDRESS SECTION - SINGLE BILLING ADDRESS */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Billing Address</Text>
+
+
+              <TouchableOpacity
+                style={styles.editBtn}
+                onPress={() => setEditAddress((p) => !p)}
+              >
+                <Text style={styles.editTxt}>
+                  {editAddress ? 'Cancel' : 'Edit Address'}
+                </Text>
+              </TouchableOpacity>
+
+              {!editAddress ? (
+                <AddressDisplay addr={billing} />
+              ) : (
+                <>
+                  {billing && addressFields.map(([field, placeholder, keyboardType]) => (
+                    <AddressInput
+                      key={field}
+                      field={field}
+                      placeholder={placeholder}
+                      value={billing[field] || ''}
+                      onChangeText={(text) => handleBillingChange(field, text)}
+                      keyboardType={keyboardType}
+                      error={getInputError(billing, field)}
+                    />
+                  ))}
+                  <TouchableOpacity
+                    style={styles.saveBtn}
+                    onPress={saveAddress}
+                  >
+                    <Text style={styles.saveTxt}>Save Address</Text>
+                  </TouchableOpacity>
                 </>
               )}
             </View>
-          ) : null}
 
-          {/* ADDRESS SECTION - SINGLE BILLING ADDRESS */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Billing Address</Text>
-
-
-            <TouchableOpacity
-              style={styles.editBtn}
-              onPress={() => setEditAddress((p) => !p)}
-            >
-              <Text style={styles.editTxt}>
-                {editAddress ? 'Cancel' : 'Edit Address'}
-              </Text>
-            </TouchableOpacity>
-
-            {!editAddress ? (
-              <AddressDisplay addr={billing} />
-            ) : (
-              <>
-                {billing && addressFields.map(([field, placeholder, keyboardType]) => (
-                  <AddressInput
-                    key={field}
-                    field={field}
-                    placeholder={placeholder}
-                    value={billing[field] || ''}
-                    onChangeText={(text) => handleBillingChange(field, text)}
-                    keyboardType={keyboardType}
-                    error={getInputError(billing, field)}
-                  />
-                ))}
-                <TouchableOpacity
-                  style={styles.saveBtn}
-                  onPress={saveAddress}
-                >
-                  <Text style={styles.saveTxt}>Save Address</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-
-          {/* SUMMARY */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Order Summary</Text>
-            <View style={styles.summaryRow}>
-              <Text>Subtotal</Text>
-              <Text>₹{subtotal.toLocaleString()}</Text>
-            </View>
-
-            {couponDiscount > 0 && (
+            {/* SUMMARY */}
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Order Summary</Text>
               <View style={styles.summaryRow}>
-                <Text>Coupon Discount</Text>
-                <Text style={styles.discountValue}>-₹{couponDiscount.toFixed(2)}</Text>
+                <Text>Subtotal</Text>
+                <Text>₹{subtotal.toLocaleString()}</Text>
               </View>
-            )}
 
-            <View style={styles.summaryRow}>
-              <Text>Delivery</Text>
-              <Text>
-                {shippingTotal === 0 ? 'FREE' : `₹${shippingTotal.toLocaleString()}`}
-              </Text>
-            </View>
+              {couponDiscount > 0 && (
+                <View style={styles.summaryRow}>
+                  <Text>Coupon Discount</Text>
+                  <Text style={styles.discountValue}>-₹{couponDiscount.toFixed(2)}</Text>
+                </View>
+              )}
 
-            <View style={styles.summaryRow}>
-              <Text>Tax</Text>
-              <Text>₹{totalTax.toFixed(2)}</Text>
-            </View>
-
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalValue}>₹{total.toLocaleString()}</Text>
-            </View>
-
-            {selectedPaymentMethod && (
-              <View style={styles.paymentSummary}>
-                <Text style={styles.paymentSummaryLabel}>Payment Method:</Text>
-                <Text style={styles.paymentSummaryValue}>
-                  {getSelectedMethodDetails()?.gateway.title}
-                  {selectedPaymentMethod === 'cod' && ' (Pay on Delivery)'}
+              <View style={styles.summaryRow}>
+                <Text>Delivery</Text>
+                <Text>
+                  {shippingTotal === 0 ? 'FREE' : `₹${shippingTotal.toLocaleString()}`}
                 </Text>
               </View>
-            )}
+
+              <View style={styles.summaryRow}>
+                <Text>Tax</Text>
+                <Text>₹{totalTax.toFixed(2)}</Text>
+              </View>
+
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Total</Text>
+                <Text style={styles.totalValue}>₹{total.toLocaleString()}</Text>
+              </View>
+
+              {selectedPaymentMethod && (
+                <View style={styles.paymentSummary}>
+                  <Text style={styles.paymentSummaryLabel}>Payment Method:</Text>
+                  <Text style={styles.paymentSummaryValue}>
+                    {getSelectedMethodDetails()?.gateway.title}
+                    {selectedPaymentMethod === 'cod' && ' (Pay on Delivery)'}
+                  </Text>
+                </View>
+              )}
+            </View>
           </View>
+
         </ScrollView>
 
         {/* Bottom button with safe area insets */}
@@ -1640,3 +1565,4 @@ const Checkout: React.FC = () => {
 };
 
 export default Checkout;
+

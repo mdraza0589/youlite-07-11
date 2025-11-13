@@ -12,7 +12,10 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
+  FlatList,
+  NativeSyntheticEvent,
+  NativeScrollEvent
 } from 'react-native';
 
 // Import APIs
@@ -297,9 +300,14 @@ const ProductCard = ({
   );
 };
 
+const ITEMS_PER_PAGE = 12;
+
 const PeopleAlsoViewed = () => {
   const [items, setItems] = useState<(Omit<ProductCardProps, 'onToggleWishlist' | 'onAddToCart'> & { id: string; title: string })[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [currentPage, setCurrentPage] = useState<number>(1);
   const [userId, setUserId] = useState<number | null>(null);
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
   const [cartIds, setCartIds] = useState<string[]>([]);
@@ -309,11 +317,13 @@ const PeopleAlsoViewed = () => {
   const [loadingWishlist, setLoadingWishlist] = useState<Record<string, boolean>>({});
   const [loadingCart, setLoadingCart] = useState<Record<string, boolean>>({});
 
-  const load = useCallback(async () => {
+  const loadInitialData = useCallback(async () => {
     try {
       setLoading(true);
+      setCurrentPage(1);
+
       const res = await getProducts({
-        per_page: 12,
+        per_page: ITEMS_PER_PAGE,
         page: 1,
         status: 'publish',
         order: 'desc',
@@ -327,13 +337,52 @@ const PeopleAlsoViewed = () => {
       const mapped = await Promise.all(mappedPromises);
 
       setItems(mapped);
+      setHasMore(mapped.length === ITEMS_PER_PAGE);
     } catch (e) {
       console.error('PeopleAlsoViewed: failed to load products', e);
       setItems([]);
+      setHasMore(false);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const loadMoreData = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+
+    try {
+      setLoadingMore(true);
+      const nextPage = currentPage + 1;
+
+      const res = await getProducts({
+        per_page: ITEMS_PER_PAGE,
+        page: nextPage,
+        status: 'publish',
+        order: 'desc',
+        orderby: 'date',
+      });
+
+      const list: WCProduct[] = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? (res as any) : [];
+
+      if (list.length === 0) {
+        setHasMore(false);
+        return;
+      }
+
+      // Async map for variation handling
+      const mappedPromises = list.map(async (p) => await mapToCard(p));
+      const mapped = await Promise.all(mappedPromises);
+
+      setItems(prev => [...prev, ...mapped]);
+      setCurrentPage(nextPage);
+      setHasMore(mapped.length === ITEMS_PER_PAGE);
+    } catch (e) {
+      console.error('PeopleAlsoViewed: failed to load more products', e);
+      setHasMore(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [currentPage, loadingMore, hasMore]);
 
   const loadUserData = useCallback(async () => {
     const session = await getSession();
@@ -353,14 +402,25 @@ const PeopleAlsoViewed = () => {
 
   useEffect(() => {
     loadUserData();
-    load();
-  }, [loadUserData, load]);
+    loadInitialData();
+  }, [loadUserData, loadInitialData]);
 
   useFocusEffect(
     useCallback(() => {
       loadUserData();
     }, [loadUserData]),
   );
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const paddingToBottom = 20;
+    const isCloseToBottom = layoutMeasurement.height + contentOffset.y >=
+      contentSize.height - paddingToBottom;
+
+    if (isCloseToBottom && hasMore && !loadingMore) {
+      loadMoreData();
+    }
+  };
 
   const showFeedback = (msg: string) => {
     setFeedbackMessage(msg);
@@ -373,7 +433,6 @@ const PeopleAlsoViewed = () => {
       return;
     }
 
-    // Set loading state for this specific product (parent ID)
     setLoadingWishlist(prev => ({ ...prev, [productId]: true }));
 
     try {
@@ -383,15 +442,12 @@ const PeopleAlsoViewed = () => {
       wishlist = exists ? wishlist.filter((id: string) => id !== productId) : [...wishlist, productId];
       await updateCustomerById(userId, { meta_data: [{ key: 'wishlist', value: wishlist }] });
 
-      // Reload user data after update
       await loadUserData();
-
       showFeedback(exists ? 'Item removed from wishlist' : 'Item added to wishlist');
     } catch (error) {
       console.error('Error toggling wishlist:', error);
       showFeedback('Failed to update wishlist');
     } finally {
-      // Clear loading state
       setLoadingWishlist(prev => ({ ...prev, [productId]: false }));
     }
   };
@@ -402,7 +458,6 @@ const PeopleAlsoViewed = () => {
       return;
     }
 
-    // Set loading state for this specific product (effective ID)
     setLoadingCart(prev => ({ ...prev, [effectiveProductId]: true }));
 
     try {
@@ -413,65 +468,91 @@ const PeopleAlsoViewed = () => {
         cart.push({ id: effectiveProductId, quantity: 1 });
         await updateCustomerById(userId, { meta_data: [{ key: 'cart', value: cart }] });
 
-        // Reload user data after update
         await loadUserData();
-
         showFeedback('Item added to cart');
       }
     } catch (error) {
       console.error('Error adding to cart:', error);
       showFeedback('Failed to update cart');
     } finally {
-      // Clear loading state
       setLoadingCart(prev => ({ ...prev, [effectiveProductId]: false }));
     }
+  };
+
+  const renderProductCard = ({ item }: { item: Omit<ProductCardProps, 'onToggleWishlist' | 'onAddToCart'> & { id: string; title: string } }) => (
+    <TouchableOpacity
+      onPress={() =>
+        router.push({ pathname: '/pages/DetailsOfItem/ItemDetails', params: { id: String(item.id), title: item.title } })
+      }
+      style={styles.cardContainer}
+    >
+      <ProductCard
+        imageSource={item.imageSource}
+        title={item.title}
+        price={item.price}
+        originalPrice={item.originalPrice}
+        discount={item.discount}
+        rating={item.rating}
+        isInWishlist={wishlistIds.includes(item.id)}
+        isInCart={cartIds.includes(item.effectiveId)}
+        effectiveId={item.effectiveId}
+        onToggleWishlist={() => toggleWishlist(item.id)}
+        onAddToCart={addToCart}
+        isWishlistLoading={loadingWishlist[item.id]}
+        isCartLoading={loadingCart[item.effectiveId]}
+      />
+    </TouchableOpacity>
+  );
+
+  const renderFooter = () => {
+    if (!loadingMore) return null;
+
+    return (
+      <View style={styles.loadingFooter}>
+        <ActivityIndicator size="small" color={Colors.PRIMARY} />
+        <Text style={styles.loadingText}>Loading more products...</Text>
+      </View>
+    );
+  };
+
+  const renderEmpty = () => {
+    if (loading) return null;
+
+    return (
+      <View style={styles.emptyContainer}>
+        <Ionicons name="search-outline" size={48} color="#ddd" />
+        <Text style={styles.emptyText}>No products available.</Text>
+      </View>
+    );
   };
 
   return (
     <View style={styles.container}>
       <Text style={styles.header}>People also viewed</Text>
 
-      {loading && items.length === 0 && (
-        <View style={{ alignItems: 'center', padding: 20 }}>
+      {loading && items.length === 0 ? (
+        <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors.PRIMARY} />
-          <Text style={{ color: '#6B7280', marginTop: 8 }}>Loading products...</Text>
+          <Text style={styles.loadingText}>Loading products...</Text>
         </View>
+      ) : (
+        <FlatList
+          data={items}
+          renderItem={renderProductCard}
+          keyExtractor={(item) => item.id}
+          numColumns={2}
+          columnWrapperStyle={styles.columnWrapper}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          ListFooterComponent={renderFooter}
+          ListEmptyComponent={renderEmpty}
+          initialNumToRender={8}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+        />
       )}
-
-      <View style={styles.grid}>
-        {items.map((item) => (
-          <TouchableOpacity
-            key={item.id}
-            onPress={() =>
-              router.push({ pathname: '/pages/DetailsOfItem/ItemDetails', params: { id: String(item.id), title: item.title } })
-            }
-            style={styles.cardContainer}
-          >
-            <ProductCard
-              imageSource={item.imageSource}
-              title={item.title}
-              price={item.price}
-              originalPrice={item.originalPrice}
-              discount={item.discount}
-              rating={item.rating}
-              isInWishlist={wishlistIds.includes(item.id)}
-              isInCart={cartIds.includes(item.effectiveId)}
-              effectiveId={item.effectiveId}
-              onToggleWishlist={() => toggleWishlist(item.id)}
-              onAddToCart={addToCart}
-              isWishlistLoading={loadingWishlist[item.id]}
-              isCartLoading={loadingCart[item.effectiveId]}
-            />
-          </TouchableOpacity>
-        ))}
-
-        {!loading && items.length === 0 && (
-          <View style={{ alignItems: 'center', padding: 40 }}>
-            <Ionicons name="search-outline" size={48} color="#ddd" />
-            <Text style={{ color: '#6B7280', marginTop: 8 }}>No products available.</Text>
-          </View>
-        )}
-      </View>
 
       {feedbackMessage && (
         <View style={styles.messageContainer}>
@@ -482,135 +563,150 @@ const PeopleAlsoViewed = () => {
   );
 };
 
-export default PeopleAlsoViewed;
-
 const styles = StyleSheet.create({
   container: {
-    padding: 10,
+    flex: 1,
     backgroundColor: '#F9FAFB',
-    justifyContent: 'center',
-
+    paddingHorizontal: 16,
   },
   header: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: 'bold',
-    marginBottom: 10,
-    color: Colors.SECONDARY,
+    color: '#111827',
+    marginBottom: 16,
+    marginTop: 8,
   },
-  grid: {
+  loadingContainer: {
+    alignItems: 'center',
+    padding: 40,
+  },
+  loadingFooter: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  loadingText: {
+    color: '#6B7280',
+    marginLeft: 8,
+  },
+  listContent: {
+    paddingBottom: 20,
+  },
+  columnWrapper: {
     justifyContent: 'space-between',
-    paddingHorizontal: 5,
+    marginBottom: 16,
   },
   cardContainer: {
-    width: (width - 50) / 2,
-    marginBottom: 10,
+    width: (width - 40) / 2,
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 1,
-    height: 250,
-    width: '100%',
+    borderRadius:6,
+    padding: 12,
   },
   imageContainer: {
     position: 'relative',
-    marginBottom: 2,
+    marginBottom: 8,
   },
   image: {
     width: '100%',
     height: 120,
-    resizeMode: 'cover',
     borderRadius: 8,
+    resizeMode: 'cover',
   },
   ratingContainer: {
     position: 'absolute',
-    bottom: 5,
-    left: 5,
+    top: 6,
+    left: 6,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: 8,
   },
   ratingText: {
     fontSize: 10,
-    color: '#fff',
+    fontWeight: '600',
+    color: '#374151',
     marginLeft: 2,
-    fontWeight: 'bold',
   },
   title: {
-    fontSize: 13,
-    marginVertical: 4,
-    color: '#333',
+    fontSize: 14,
     fontWeight: '500',
+    color: '#111827',
+    marginBottom: 8,
+    height: 40,
   },
   priceContainer: {
-    marginBottom: 2,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    marginBottom: 12,
   },
   originalPrice: {
     fontSize: 12,
     color: '#9CA3AF',
     textDecorationLine: 'line-through',
+    marginBottom: 2,
   },
   discountedPrice: {
     fontSize: 16,
-    color: Colors.PRIMARY,
     fontWeight: 'bold',
+    color: '#111827',
   },
   discount: {
-    fontSize: 12,
-    color: '#fff',
-    fontWeight: 'bold',
-    backgroundColor: '#7da112',
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#EF4444',
+    backgroundColor: '#FEF2F2',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-    marginLeft: 8,
   },
   wishlistButton: {
     padding: 4,
-    width: 28,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   addToCartButton: {
-    backgroundColor: Colors.PRIMARY,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
-    width: '100%',
-    alignItems: 'center',
-    marginTop: 'auto',
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    minHeight: 36,
+    backgroundColor: Colors.PRIMARY,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
   },
   addToCartText: {
-    color: '#fff',
-    fontWeight: '600',
+    color: Colors.WHITE,
     fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyText: {
+    color: '#6B7280',
+    marginTop: 8,
   },
   messageContainer: {
     position: 'absolute',
     bottom: 20,
-    left: 0,
-    right: 0,
-    backgroundColor: '#333',
-    padding: 16,
-    marginHorizontal: 16,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    padding: 12,
     borderRadius: 8,
     alignItems: 'center',
   },
   messageText: {
-    color: '#fff',
-    fontSize: 16,
+    color: Colors.WHITE,
+    fontSize: 14,
+    fontWeight: '500',
   },
 });
+
+export default PeopleAlsoViewed;
+

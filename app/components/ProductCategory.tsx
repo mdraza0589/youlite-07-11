@@ -101,7 +101,7 @@ const ProCategory: React.FC = () => {
           data={categories}
           keyExtractor={(item, idx) => item?.id || String(idx)}
           horizontal
-          contentContainerStyle={{ paddingRight: 16 }}
+          contentContainerStyle={{gap:12 }}
           showsHorizontalScrollIndicator={false}
           renderItem={({ item }) => {
             const imgSrc = item?.image?.src ?? null;

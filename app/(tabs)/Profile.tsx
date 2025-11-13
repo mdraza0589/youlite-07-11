@@ -1,6 +1,7 @@
 // Modified app/(tabs)/Profile.tsx
 // Enhanced UI with better icons, improved layout, and additional features
 // Fixed email display to show the actual email from registration
+// Added pull-to-refresh functionality
 
 import Colors from '@/utils/Colors';
 import Dimenstion from '@/utils/Dimenstion';
@@ -8,8 +9,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system/legacy';
 import Feather from '@expo/vector-icons/Feather';
-
-
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -19,6 +18,7 @@ import {
   Image,
   LayoutAnimation,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -33,6 +33,7 @@ import {
   getSession,
   updateCustomerById,
 } from '@/lib/services/authService';
+import Loading from '../components/Loading';
 
 // Types
 interface WCAddress {
@@ -135,6 +136,7 @@ const ProfileScreen: React.FC = () => {
   const [uploadingAvatar, setUploadingAvatar] = useState<boolean>(false);
   const [expandedBilling, setExpandedBilling] = useState<boolean>(false);
   const [expandedShipping, setExpandedShipping] = useState<boolean>(false);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
 
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -186,6 +188,13 @@ const ProfileScreen: React.FC = () => {
       refreshProfile();
     }, [refreshProfile])
   );
+
+  // Add pull-to-refresh handler
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refreshProfile();
+    setRefreshing(false);
+  }, [refreshProfile]);
 
   const display = useMemo(() => {
     if (!customer && session) {
@@ -297,9 +306,9 @@ const ProfileScreen: React.FC = () => {
 
   if (loading) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color={Colors.PRIMARY} />
-      </View>
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 24 }]} >
+        <Loading />
+      </View >
     );
   }
 
@@ -324,204 +333,217 @@ const ProfileScreen: React.FC = () => {
         <View></View>
       </View>
 
-      <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContent}>
-        {/* Profile Section */}
-        <View style={styles.profileSection}>
-          <View style={styles.avatarContainer}>
-            {hasAvatar ? (
-              <Image source={{ uri: display.avatar }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={{ color: Colors.WHITE, fontWeight: 'bold', fontSize: 24 }}>
-                  {initialsFrom(display.name, display.email)}
-                </Text>
+      <ScrollView
+        style={styles.scrollContainer}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[Colors.PRIMARY]}
+            tintColor={Colors.PRIMARY}
+          />
+        }
+      >
+        <View>
+          {/* Profile Section */}
+          <View style={styles.profileSection}>
+            <View style={styles.avatarContainer}>
+              {hasAvatar ? (
+                <Image source={{ uri: display.avatar }} style={styles.avatar} />
+              ) : (
+                <View style={[styles.avatar, styles.avatarFallback]}>
+                  <Text style={{ color: Colors.WHITE, fontWeight: 'bold', fontSize: 24 }}>
+                    {initialsFrom(display.name, display.email)}
+                  </Text>
+                </View>
+              )}
+              <TouchableOpacity style={styles.editIcon} onPress={onChangeAvatar} disabled={uploadingAvatar}>
+                <Ionicons name={uploadingAvatar ? 'cloud-upload-outline' : 'camera-outline'} size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.userName}>{display.name}</Text>
+            {display.email ? (
+              <Text style={styles.userEmail}>{display.email}</Text>
+            ) : null}
+          </View>
+
+          {/* Personal Information */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleContainer}>
+                <Ionicons name="person-outline" size={20} color={Colors.PRIMARY} style={styles.sectionIcon} />
+                <Text style={styles.sectionTitle}>Personal Information</Text>
               </View>
-            )}
-            <TouchableOpacity style={styles.editIcon} onPress={onChangeAvatar} disabled={uploadingAvatar}>
-              <Ionicons name={uploadingAvatar ? 'cloud-upload-outline' : 'camera-outline'} size={18} color="#fff" />
+              <TouchableOpacity onPress={() => router.push('/pages/Profile/AccountInfo')}>
+                <Ionicons name="pencil-outline" size={20} color={Colors.PRIMARY} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.infoItem}>
+              <Ionicons name="person-outline" size={20} color="#666" style={styles.infoIcon} />
+              <Text style={styles.infoText}>{display.name}</Text>
+            </View>
+
+            {/* Always show email if available - removed @example.com filter */}
+            <TouchableOpacity style={styles.infoItem} onPress={() => router.push('/pages/Profile/AccountInfo')}>
+              <Ionicons name="mail-outline" size={20} color="#666" style={styles.infoIcon} />
+              {display.email !== '' ? (
+                <View >
+                  <Text style={styles.infoText}>{display.email}</Text>
+                </View>
+              ) :
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 50 }}>
+                  <Text style={styles.infoText}>Add Your Email *</Text>
+                  <Feather name="alert-triangle" size={16} color="black" />
+                </View>
+              }
+            </TouchableOpacity>
+
+            <View style={[styles.infoItem, { borderBottomWidth: 0 }]}>
+              <Ionicons name="call-outline" size={20} color="#666" style={styles.infoIcon} />
+              <Text style={styles.infoText}>{display.phone || '—'}</Text>
+            </View>
+          </View>
+
+          {/* Address Section */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleContainer}>
+                <Ionicons name="location-outline" size={20} color={Colors.PRIMARY} style={styles.sectionIcon} />
+                <Text style={styles.sectionTitle}>Addresses</Text>
+              </View>
+            </View>
+
+            {/* Billing Address */}
+            <View style={styles.accordionItem}>
+              <View style={styles.accordionHeader}>
+                <View style={styles.accordionTitleContainer}>
+                  <Ionicons name="card-outline" size={18} color="#666" style={styles.accordionIcon} />
+                  <Text style={styles.accordionTitle}>Billing Address</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity onPress={() => router.push('/pages/Profile/BillingAddress')} style={{ marginRight: 16 }}>
+                    <Ionicons name="pencil-outline" size={20} color={Colors.PRIMARY} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => toggleAccordion('billing')}>
+                    <Ionicons style={{ fontWeight: '700' }} name={expandedBilling ? 'chevron-up' : 'chevron-down'} size={24} color={Colors.PRIMARY} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {expandedBilling && (
+                <View style={styles.accordionContent}>
+                  <Row label="First name" value={customer?.billing?.first_name || ''} />
+                  <Row label="Last name" value={customer?.billing?.last_name || ''} />
+                  <Row label="Company" value={customer?.billing?.company || ''} />
+                  <Row label="Address 1" value={customer?.billing?.address_1 || ''} />
+                  <Row label="Address 2" value={customer?.billing?.address_2 || ''} />
+                  <Row label="City" value={customer?.billing?.city || ''} />
+                  <Row label="Postcode" value={customer?.billing?.postcode || ''} />
+                  <Row label="Country" value={customer?.billing?.country || ''} />
+                  <Row label="State" value={customer?.billing?.state || ''} />
+                  <Row label="Email" value={customer?.billing?.email || ''} />
+                  <Row label="Phone" value={customer?.billing?.phone || ''} />
+                </View>
+              )}
+            </View>
+
+            <View style={styles.divider} />
+
+            {/* Shipping Address */}
+            <View style={styles.accordionItem}>
+              <View style={styles.accordionHeader}>
+                <View style={styles.accordionTitleContainer}>
+                  <Ionicons name="car-outline" size={18} color="#666" style={styles.accordionIcon} />
+                  <Text style={styles.accordionTitle}>Shipping Address</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity onPress={() => router.push('/pages/Profile/ShippingAddress')} style={{ marginRight: 16 }}>
+                    <Ionicons name="pencil-outline" size={20} color={Colors.PRIMARY} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => toggleAccordion('shipping')}>
+                    <Ionicons name={expandedShipping ? 'chevron-up' : 'chevron-down'} size={24} color={Colors.PRIMARY} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {expandedShipping && (
+                <View style={styles.accordionContent}>
+                  <Row label="First name" value={customer?.shipping?.first_name || ''} />
+                  <Row label="Last name" value={customer?.shipping?.last_name || ''} />
+                  <Row label="Company" value={customer?.shipping?.company || ''} />
+                  <Row label="Address 1" value={customer?.shipping?.address_1 || ''} />
+                  <Row label="Address 2" value={customer?.shipping?.address_2 || ''} />
+                  <Row label="City" value={customer?.shipping?.city || ''} />
+                  <Row label="Postcode" value={customer?.shipping?.postcode || ''} />
+                  <Row label="Country" value={customer?.shipping?.country || ''} />
+                  <Row label="State" value={customer?.shipping?.state || ''} />
+                  <Row label="Email" value={customer?.shipping?.email || customer?.billing?.email || ''} />
+                  <Row label="Phone" value={customer?.shipping?.phone || ''} />
+                </View>
+              )}
+            </View>
+          </View>
+
+          {/* Account Management */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleContainer}>
+                <Ionicons name="key-outline" size={20} color={Colors.PRIMARY} style={styles.sectionIcon} />
+                <Text style={styles.sectionTitle}>Account Management</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/pages/Profile/About')}>
+              <View style={styles.settingIconContainer}>
+                <Ionicons name="information-circle-outline" size={22} color={Colors.PRIMARY} />
+              </View>
+              <Text style={styles.settingText}>About App</Text>
+              <Ionicons name="chevron-forward" size={18} color="#999" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/pages/Profile/ChangePassword')}>
+              <View style={styles.settingIconContainer}>
+                <Ionicons name="lock-closed-outline" size={22} color={Colors.PRIMARY} />
+              </View>
+              <Text style={styles.settingText}>Change Password</Text>
+              <Ionicons name="chevron-forward" size={18} color="#999" />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/pages/orderHistory/orderHistory')}>
+              <View style={styles.settingIconContainer}>
+                <Ionicons name="bag-handle-outline" size={22} color={Colors.PRIMARY} />
+              </View>
+              <Text style={styles.settingText}>Order History</Text>
+              <Ionicons name="chevron-forward" size={18} color="#999" />
             </TouchableOpacity>
           </View>
-          <Text style={styles.userName}>{display.name}</Text>
-          {display.email ? (
-            <Text style={styles.userEmail}>{display.email}</Text>
-          ) : null}
-        </View>
 
-        {/* Personal Information */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleContainer}>
-              <Ionicons name="person-outline" size={20} color={Colors.PRIMARY} style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Personal Information</Text>
+          {/* Support */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleContainer}>
+                <Ionicons name="help-buoy-outline" size={20} color={Colors.PRIMARY} style={styles.sectionIcon} />
+                <Text style={styles.sectionTitle}>Support</Text>
+              </View>
             </View>
-            <TouchableOpacity onPress={() => router.push('/pages/Profile/AccountInfo')}>
-              <Ionicons name="pencil-outline" size={20} color={Colors.PRIMARY} />
+
+            <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/pages/Profile/Contact')}>
+              <View style={styles.settingIconContainer}>
+                <Ionicons name="help-circle-outline" size={22} color={Colors.PRIMARY} />
+              </View>
+              <Text style={styles.settingText}>Help & Support</Text>
+              <Ionicons name="chevron-forward" size={18} color="#999" />
             </TouchableOpacity>
           </View>
 
-          <View style={styles.infoItem}>
-            <Ionicons name="person-outline" size={20} color="#666" style={styles.infoIcon} />
-            <Text style={styles.infoText}>{display.name}</Text>
-          </View>
-
-          {/* Always show email if available - removed @example.com filter */}
-          <TouchableOpacity style={styles.infoItem} onPress={() => router.push('/pages/Profile/AccountInfo')}>
-            <Ionicons name="mail-outline" size={20} color="#666" style={styles.infoIcon} />
-            {display.email !== '' ? (
-              <View >
-                <Text style={styles.infoText}>{display.email}</Text>
-              </View>
-            ) :
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingRight: 50 }}>
-                <Text style={styles.infoText}>Add Your Email *</Text>
-                <Feather name="alert-triangle" size={16} color="black" />
-              </View>
-            }
-          </TouchableOpacity>
-
-          <View style={[styles.infoItem, { borderBottomWidth: 0 }]}>
-            <Ionicons name="call-outline" size={20} color="#666" style={styles.infoIcon} />
-            <Text style={styles.infoText}>{display.phone || '—'}</Text>
-          </View>
-        </View>
-
-        {/* Address Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleContainer}>
-              <Ionicons name="location-outline" size={20} color={Colors.PRIMARY} style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Addresses</Text>
-            </View>
-          </View>
-
-          {/* Billing Address */}
-          <View style={styles.accordionItem}>
-            <View style={styles.accordionHeader}>
-              <View style={styles.accordionTitleContainer}>
-                <Ionicons name="card-outline" size={18} color="#666" style={styles.accordionIcon} />
-                <Text style={styles.accordionTitle}>Billing Address</Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <TouchableOpacity onPress={() => router.push('/pages/Profile/BillingAddress')} style={{ marginRight: 16 }}>
-                  <Ionicons name="pencil-outline" size={20} color={Colors.PRIMARY} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => toggleAccordion('billing')}>
-                  <Ionicons style={{ fontWeight: '700' }} name={expandedBilling ? 'chevron-up' : 'chevron-down'} size={24} color={Colors.PRIMARY} />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {expandedBilling && (
-              <View style={styles.accordionContent}>
-                <Row label="First name" value={customer?.billing?.first_name || ''} />
-                <Row label="Last name" value={customer?.billing?.last_name || ''} />
-                <Row label="Company" value={customer?.billing?.company || ''} />
-                <Row label="Address 1" value={customer?.billing?.address_1 || ''} />
-                <Row label="Address 2" value={customer?.billing?.address_2 || ''} />
-                <Row label="City" value={customer?.billing?.city || ''} />
-                <Row label="Postcode" value={customer?.billing?.postcode || ''} />
-                <Row label="Country" value={customer?.billing?.country || ''} />
-                <Row label="State" value={customer?.billing?.state || ''} />
-                <Row label="Email" value={customer?.billing?.email || ''} />
-                <Row label="Phone" value={customer?.billing?.phone || ''} />
-              </View>
-            )}
-          </View>
-
-          <View style={styles.divider} />
-
-          {/* Shipping Address */}
-          <View style={styles.accordionItem}>
-            <View style={styles.accordionHeader}>
-              <View style={styles.accordionTitleContainer}>
-                <Ionicons name="car-outline" size={18} color="#666" style={styles.accordionIcon} />
-                <Text style={styles.accordionTitle}>Shipping Address</Text>
-              </View>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <TouchableOpacity onPress={() => router.push('/pages/Profile/ShippingAddress')} style={{ marginRight: 16 }}>
-                  <Ionicons name="pencil-outline" size={20} color={Colors.PRIMARY} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => toggleAccordion('shipping')}>
-                  <Ionicons name={expandedShipping ? 'chevron-up' : 'chevron-down'} size={24} color={Colors.PRIMARY} />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {expandedShipping && (
-              <View style={styles.accordionContent}>
-                <Row label="First name" value={customer?.shipping?.first_name || ''} />
-                <Row label="Last name" value={customer?.shipping?.last_name || ''} />
-                <Row label="Company" value={customer?.shipping?.company || ''} />
-                <Row label="Address 1" value={customer?.shipping?.address_1 || ''} />
-                <Row label="Address 2" value={customer?.shipping?.address_2 || ''} />
-                <Row label="City" value={customer?.shipping?.city || ''} />
-                <Row label="Postcode" value={customer?.shipping?.postcode || ''} />
-                <Row label="Country" value={customer?.shipping?.country || ''} />
-                <Row label="State" value={customer?.shipping?.state || ''} />
-                <Row label="Email" value={customer?.shipping?.email || customer?.billing?.email || ''} />
-                <Row label="Phone" value={customer?.shipping?.phone || ''} />
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Account Management */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleContainer}>
-              <Ionicons name="key-outline" size={20} color={Colors.PRIMARY} style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Account Management</Text>
-            </View>
-          </View>
-
-          <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/pages/Profile/About')}>
-            <View style={styles.settingIconContainer}>
-              <Ionicons name="information-circle-outline" size={22} color={Colors.PRIMARY} />
-            </View>
-            <Text style={styles.settingText}>About App</Text>
-            <Ionicons name="chevron-forward" size={18} color="#999" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/pages/Profile/ChangePassword')}>
-            <View style={styles.settingIconContainer}>
-              <Ionicons name="lock-closed-outline" size={22} color={Colors.PRIMARY} />
-            </View>
-            <Text style={styles.settingText}>Change Password</Text>
-            <Ionicons name="chevron-forward" size={18} color="#999" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/pages/orderHistory/orderHistory')}>
-            <View style={styles.settingIconContainer}>
-              <Ionicons name="bag-handle-outline" size={22} color={Colors.PRIMARY} />
-            </View>
-            <Text style={styles.settingText}>Order History</Text>
-            <Ionicons name="chevron-forward" size={18} color="#999" />
+          {/* Logout */}
+          <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
+            <Ionicons name="log-out-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
+            <Text style={styles.logoutText}>Log Out</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Support */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleContainer}>
-              <Ionicons name="help-buoy-outline" size={20} color={Colors.PRIMARY} style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Support</Text>
-            </View>
-          </View>
-
-          <TouchableOpacity style={styles.settingItem} onPress={() => router.push('/pages/Profile/Contact')}>
-            <View style={styles.settingIconContainer}>
-              <Ionicons name="help-circle-outline" size={22} color={Colors.PRIMARY} />
-            </View>
-            <Text style={styles.settingText}>Help & Support</Text>
-            <Ionicons name="chevron-forward" size={18} color="#999" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Logout */}
-        <TouchableOpacity style={styles.logoutButton} onPress={onLogout}>
-          <Ionicons name="log-out-outline" size={20} color="#fff" style={{ marginRight: 8 }} />
-          <Text style={styles.logoutText}>Log Out</Text>
-        </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -548,6 +570,9 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: Colors.WHITE
+  },
+  refreshButton: {
+    padding: 4,
   },
   scrollContainer: {
     flex: 1,
@@ -740,3 +765,4 @@ const styles = StyleSheet.create({
 });
 
 export default ProfileScreen;
+

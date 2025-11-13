@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, TouchableWithoutFeedback } from 'react-native';
 import { Video, ResizeMode } from "expo-av";
 import YoutubeIframe from "react-native-youtube-iframe";
-
+const { width } = Dimensions.get('window');
 import styles from './itemDetailsStyle'
 import {
     ActivityIndicator,
@@ -308,9 +308,9 @@ const mapToUIProduct = async (p: any): Promise<Product> => {
     // Extract video data
     const videoData = extractVideoData(p?.meta_data || []);
 
-    // If video exists, add it as the first item in images array
+    // If video exists, add it to the END of images array instead of beginning
     if (videoData?.videoUrl) {
-        imageUrls.unshift(videoData.videoUrl);
+        imageUrls.push(videoData.videoUrl); // Changed from unshift() to push()
     }
 
     const desc = stripHtml(decodeEntities(p?.description || '')) || stripHtml(decodeEntities(p?.short_description || '')) || '';
@@ -991,13 +991,15 @@ const ItemDetails = () => {
                                     useNativeControls
                                 />
                             ) : (
-                                <YoutubeIframe
-                                    height={Dimensions.get("window").width}
-                                    width={Dimensions.get("window").width}
-                                    play={true}
-                                    videoId={videoId}
-                                    onError={(e: string) => console.log("YouTube Error:", e)}
-                                />
+                                <View style={styles.youtubeWrapper}>
+                                    <YoutubeIframe
+                                        height={width * 0.5625} // 16:9 aspect ratio
+                                        width={width}
+                                        play={true}
+                                        videoId={videoId}
+                                        onError={(e: string) => console.log("YouTube Error:", e)}
+                                    />
+                                </View>
                             )
                         ) : (
                             <TouchableOpacity
@@ -1065,10 +1067,10 @@ const ItemDetails = () => {
                         <Text style={styles.ratingText}>
                             {product.rating} ({product.reviewCount} reviews)
                         </Text>
-                        <View style={styles.categoryContainer}>
-                            <Ionicons name="pricetag-outline" size={16} color="#666" />
-                            <Text style={styles.categoryText}>{product.categoryName || 'Uncategorized'}</Text>
-                        </View>
+                    </View>
+                    <View style={styles.categoryContainer}>
+                        <Ionicons name="pricetag-outline" size={16} color="#666" />
+                        <Text style={styles.categoryText}>{product.categoryName || 'Uncategorized'}</Text>
                     </View>
 
                     <TouchableOpacity style={styles.button} onPress={handleGoToChat}>
@@ -1131,7 +1133,7 @@ const ItemDetails = () => {
                             style={styles.picker}
                         >
                             {product.options.map((option) => (
-                                <Picker.Item key={option} label={option} value={option} />
+                                <Picker.Item key={option} label={option} value={option} style={styles.pickerTextColor} />
                             ))}
                         </Picker>
                     </View>
